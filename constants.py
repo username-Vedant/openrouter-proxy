@@ -16,4 +16,4 @@ RATE_LIMIT_ERROR_MESSAGE = "Rate limit exceeded: free-models-per-day"
 PUBLIC_ENDPOINTS = ["/api/v1/models", "/api/v1/models/"]
 
 # Endpoints that may return binary data
-BINARY_ENDPOINTS = ["/api/v1/generation"] 
+BINARY_ENDPOINTS = ["/api/v1/generation"]
