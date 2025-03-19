@@ -4,7 +4,6 @@ Utility functions for OpenRouter API Proxy.
 """
 
 import socket
-import json
 from typing import Dict, Any, Optional, Tuple
 
 from fastapi import Request, Header, HTTPException
@@ -12,6 +11,7 @@ from httpx import Response
 
 from config import logger
 from constants import RATE_LIMIT_ERROR_MESSAGE
+
 
 def get_local_ip() -> str:
     """Get local IP address for displaying in logs."""
@@ -120,9 +120,9 @@ def check_rate_limit_error(response: Response) -> Tuple[bool, Optional[int]]:
     if "X-RateLimit-Reset" in response.headers:
         try:
             reset_time_ms = int(response.headers["X-RateLimit-Reset"])
-            logger.info("Found X-RateLimit-Reset in headers: %(reset_time_ms)s", )
+            logger.info(f"Found X-RateLimit-Reset in headers: {reset_time_ms}s", )
         except (ValueError, TypeError) as e:
-            logger.warning("Failed to parse X-RateLimit-Reset header: %(e)s", )
+            logger.warning(f"Failed to parse X-RateLimit-Reset header: {e}s", )
 
     # Check response content if it's JSON
     content_type = response.headers.get('content-type', '')
@@ -149,54 +149,8 @@ def check_rate_limit_error(response: Response) -> Tuple[bool, Optional[int]]:
                         logger.info(
     f"Found X-RateLimit-Reset in response metadata: {reset_time_ms}")
                     except (ValueError, TypeError) as e:
-                        logger.warning("Failed to parse X-RateLimit-Reset from metadata: %(e)s", )
+                        logger.warning(f"Failed to parse X-RateLimit-Reset from metadata: {e}s", )
         except Exception as e:
-            logger.debug("Error parsing JSON response: %(e)s", )
-
-    return has_rate_limit_error, reset_time_ms
-
-def parse_rate_limit_from_sse(sse_chunk: str) -> Tuple[bool, Optional[int]]:
-    """
-    Parse SSE data for rate limit errors.
-
-    Args:
-        sse_chunk: SSE data chunk
-
-    Returns:
-        Tuple (has_rate_limit_error, reset_time_ms)
-    """
-    has_rate_limit_error = False
-    reset_time_ms = None
-
-    for line in sse_chunk.splitlines():
-        if line.startswith('data: '):
-            try:
-                data_part = line[6:]  # Remove 'data: ' prefix
-                if data_part and data_part != '[DONE]':
-                    data_json = json.loads(data_part)
-
-                    # Check for rate limit error in data
-                    if (
-                        "error" in data_json and
-                        "message" in data_json["error"] and
-                        data_json["error"]["message"] == RATE_LIMIT_ERROR_MESSAGE
-                    ):
-                        has_rate_limit_error = True
-
-                        # Extract reset time if available
-                        if "metadata" in data_json[
-    "error"] and "headers" in data_json["error"]["metadata"]:
-                            headers = data_json["error"]["metadata"]["headers"]
-                            if "X-RateLimit-Reset" in headers:
-                                try:
-                                    reset_time_ms = int(headers["X-RateLimit-Reset"])
-                                    logger.info(
-    f"Found X-RateLimit-Reset in SSE data: {reset_time_ms}")
-                                except (ValueError, TypeError) as e:
-                                    logger.warning(
-    f"Failed to parse X-RateLimit-Reset from SSE: {e}")
-                        break
-            except json.JSONDecodeError:
-                pass  # Skip non-JSON data lines
+            logger.debug(f"Error parsing JSON response: {e}s", )
 
     return has_rate_limit_error, reset_time_ms

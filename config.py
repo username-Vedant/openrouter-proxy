@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-import sys
-import yaml
 import logging
+import sys
 from typing import Dict, Any
+
+import yaml
 
 """
 Configuration module for OpenRouter API Proxy.
