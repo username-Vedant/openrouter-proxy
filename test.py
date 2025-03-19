@@ -72,6 +72,7 @@ async def test_openrouter_streaming():
         stream = await client.chat.completions.create(
             **request_data,
             extra_headers=headers,
+            extra_body={"include_reasoning": True}
         )
 
         print("\nStarting to receive stream...\n")

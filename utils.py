@@ -4,13 +4,13 @@ Utility functions for OpenRouter API Proxy.
 """
 
 import socket
-from typing import Dict, Any, Optional, Tuple
+from typing import Optional, Tuple
 
-from fastapi import Request, Header, HTTPException
+from fastapi import Header, HTTPException
 from httpx import Response
 
 from config import logger
-from constants import RATE_LIMIT_ERROR_MESSAGE
+from constants import RATE_LIMIT_ERROR_MESSAGE, RATE_LIMIT_ERROR_CODE
 
 
 def get_local_ip() -> str:
@@ -27,19 +27,15 @@ def get_local_ip() -> str:
         return "localhost"
 
 async def verify_access_key(
-    request: Request,
     authorization: Optional[str] = Header(None),
     access_key: str = None,
-    public_endpoints: list = None
 ) -> bool:
     """
     Verify the local access key for authentication.
 
     Args:
-        request: FastAPI request object
         authorization: Authorization header
         access_key: Access key to verify
-        public_endpoints: List of public endpoints
 
     Returns:
         True if authentication is successful
@@ -47,9 +43,6 @@ async def verify_access_key(
     Raises:
         HTTPException: If authentication fails
     """
-    # Check if endpoint is public
-    if public_endpoints and any(request.url.path.startswith(ep) for ep in public_endpoints):
-        return True
 
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header missing")
@@ -63,45 +56,6 @@ async def verify_access_key(
 
     return True
 
-async def prepare_request(request: Request, target_path: str, api_key: str) -> Dict[str, Any]:
-    """
-    Prepare the request to be forwarded to OpenRouter.
-
-    Args:
-        request: Original request
-        target_path: Target API path
-        api_key: API key to use
-
-    Returns:
-        Dictionary with request parameters for httpx
-    """
-    # Read request body
-    body = await request.body()
-
-    # Copy headers
-    headers = dict(request.headers)
-
-    # These headers should not be forwarded
-    headers_to_remove = [
-        "host",
-        "content-length",
-        "connection",
-        "authorization"  # We'll set our own authorization header
-    ]
-
-    for header in headers_to_remove:
-        if header in headers:
-            del headers[header]
-
-    # Set OpenRouter authorization header
-    headers["Authorization"] = f"Bearer {api_key}"
-
-    return {
-        "method": request.method,
-        "url": target_path,
-        "headers": headers,
-        "content": body,
-    }
 
 def check_rate_limit_error(response: Response) -> Tuple[bool, Optional[int]]:
     """
@@ -129,20 +83,12 @@ def check_rate_limit_error(response: Response) -> Tuple[bool, Optional[int]]:
     if 'application/json' in content_type:
         try:
             data = response.json()
-
-            if (
-                "error" in data and
-                "message" in data["error"] and
-                data["error"]["message"] == RATE_LIMIT_ERROR_MESSAGE
-            ):
+            if (data.get("error", {}).get("status", '') == RATE_LIMIT_ERROR_CODE and
+                    data.get("error", {}).get("message", '') == RATE_LIMIT_ERROR_MESSAGE):
                 has_rate_limit_error = True
 
                 # Extract reset time from metadata if available
-                if (
-                    "metadata" in data["error"] and
-                    "headers" in data["error"]["metadata"] and
-                    "X-RateLimit-Reset" in data["error"]["metadata"]["headers"]
-                ):
+                if "X-RateLimit-Reset" in data.get("error", {}).get("metadata", {}).get("headers", {}):
                     try:
                         reset_time_ms = int(data[
     "error"]["metadata"]["headers"]["X-RateLimit-Reset"])

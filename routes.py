@@ -51,10 +51,8 @@ async def proxy_endpoint(
     # Verify authorization for non-public endpoints
     if not is_public:
         await verify_access_key(
-            request=request,
             authorization=authorization,
             access_key=config["server"]["access_key"],
-            public_endpoints=PUBLIC_ENDPOINTS,
         )
 
     # Log the full request URL including query parameters
@@ -93,11 +91,7 @@ async def proxy_endpoint(
         request_body = None
 
     # For binary, models endpoint, non-OpenAI-compatible endpoints or requests with model-specific parameters, fall back to httpx
-    if (
-        is_binary
-        or "/models" in path
-        or not ("/chat/completions" in path or "/embeddings" in path)
-    ):
+    if is_binary or "/models" in path or not "/chat/completions" in path:
         return await proxy_with_httpx(request, path, is_public, is_binary, is_stream)
 
     # For OpenAI-compatible endpoints, use the OpenAI library
@@ -119,8 +113,6 @@ async def proxy_endpoint(
             return await handle_chat_completions(
                 client, request, request_body, api_key, is_stream
             )
-        elif "/embeddings" in path:
-            return await handle_embeddings(client, request, request_body, api_key)
         else:
             # Fallback for other endpoints
             return await proxy_with_httpx(
@@ -150,23 +142,23 @@ async def handle_chat_completions(
         # Create a copy of the request body to modify
         completion_args = request_body.copy()
 
-        # Remove non-standard parameters that OpenAI SDK doesn't support
-        openai_unsupported_params = ["include_reasoning", "transforms"]
+        # Move non-standard parameters that OpenAI SDK doesn't support directly to extra_body
+        extra_body = {}
+        openai_unsupported_params = ["include_reasoning", "transforms", "route"]
         for param in openai_unsupported_params:
             if param in completion_args:
-                logger.info(f"Removing unsupported parameter '{param}' for OpenAI SDK")
-                del completion_args[param]
+                extra_body[param] = completion_args.pop(param)
+
+        # Ensure we don't pass 'stream' twice
+        if "stream" in completion_args:
+            del completion_args["stream"]
 
         # Create a properly formatted request to the OpenAI API
         if is_stream:
             logger.info("Making streaming chat completion request")
 
-            # Ensure we don't pass 'stream' twice
-            if "stream" in completion_args:
-                del completion_args["stream"]
-
             response = await client.chat.completions.create(
-                **completion_args, extra_headers=forward_headers, stream=True
+                **completion_args, extra_headers=forward_headers, extra_body=extra_body, stream=True
             )
 
             # Handle streaming response
@@ -204,12 +196,8 @@ async def handle_chat_completions(
             # Non-streaming request
             logger.info("Making regular chat completion request")
 
-            # Ensure we don't pass 'stream' twice
-            if "stream" in completion_args:
-                del completion_args["stream"]
-
             response = await client.chat.completions.create(
-                **completion_args, extra_headers=forward_headers
+                **completion_args, extra_headers=forward_headers, extra_body=extra_body
             )
 
             # Return the response as JSON
@@ -236,41 +224,6 @@ async def handle_chat_completions(
         # Raise the exception
         raise HTTPException(
             status_code=500, detail=f"Error processing chat completion: {str(e)}"
-        )
-
-
-async def handle_embeddings(
-    client: AsyncOpenAI, request: Request, request_body: Dict[str, Any], api_key: str
-) -> Response:
-    """Handle embeddings using the OpenAI client."""
-    try:
-        # Create a copy of the request body to modify
-        embedding_args = request_body.copy()
-
-        response = await client.embeddings.create(**embedding_args)
-        return Response(
-            content=json.dumps(response.model_dump()), media_type="application/json"
-        )
-    except Exception as e:
-        logger.error(f"Error creating embeddings: {str(e)}")
-        # Check if this is a rate limit error
-        if "rate limit" in str(e).lower() and api_key:
-            logger.warning(
-                f"Rate limit reached for API key. Disabling key and retrying."
-            )
-            await key_manager.disable_key(api_key, None)
-
-            # Try again with a new key
-            new_api_key = await key_manager.get_next_key()
-            if new_api_key:
-                new_client = await get_openai_client(new_api_key)
-                return await handle_embeddings(
-                    new_client, request, request_body, new_api_key
-                )
-
-        # Raise the exception
-        raise HTTPException(
-            status_code=500, detail=f"Error creating embeddings: {str(e)}"
         )
 
 

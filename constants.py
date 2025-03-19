@@ -13,7 +13,7 @@ RATE_LIMIT_ERROR_CODE = 429
 RATE_LIMIT_ERROR_MESSAGE = "Rate limit exceeded: free-models-per-day"
 
 # Public endpoints that don't require authentication
-PUBLIC_ENDPOINTS = ["/api/v1/models", "/api/v1/models/"]
+PUBLIC_ENDPOINTS = ["/api/v1/models"]
 
 # Endpoints that may return binary data
 BINARY_ENDPOINTS = ["/api/v1/generation"]
