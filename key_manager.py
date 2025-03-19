@@ -14,6 +14,13 @@ from fastapi import HTTPException
 from config import logger
 
 
+@staticmethod
+def _mask_key(key: str) -> str:
+    """Mask an API key for logging purposes."""
+    if len(key) <= 8:
+        return "****"
+    return key[:4] + "****" + key[-4:]
+
 class KeyManager:
     """Manages OpenRouter API keys, including rotation and rate limit handling."""
     def __init__(self, keys: List[str], cooldown_seconds: int):
@@ -40,7 +47,7 @@ class KeyManager:
                     if datetime.now() >= self.disabled_until[key]:
                         # Key cooldown period has expired
                         del self.disabled_until[key]
-                        logger.info("API key %(self._mask_key(key))s is now enabled again.", )
+                        logger.info("API key %s is now enabled again.", _mask_key(key))
                         return key
                 else:
                     # Key is not disabled
@@ -50,7 +57,8 @@ class KeyManager:
             soonest_available = min(self.disabled_until.values())
             wait_seconds = (soonest_available - datetime.now()).total_seconds()
             logger.error(
-    f"All API keys are currently disabled. The next key will be available in {wait_seconds:.2f} seconds.")
+                "All API keys are currently disabled. The next key will be available in %.2f seconds.", wait_seconds
+            )
             raise HTTPException(
                 status_code=503,
                 detail="All API keys are currently disabled due to rate limits. Please try again later."
@@ -75,30 +83,23 @@ class KeyManager:
                     # Ensure reset time is in the future
                     if reset_datetime > datetime.now():
                         disabled_until = reset_datetime
-                        logger.info("Using server-provided reset time: %(disabled_until)s", )
+                        logger.info("Using server-provided reset time: %s", str(disabled_until))
                     else:
                         # Fallback to default cooldown if reset time is in the past
                         disabled_until = datetime.now() + timedelta(seconds=self.cooldown_seconds)
                         logger.warning(
-    f"Server-provided reset time is in the past, using default cooldown of {self.cooldown_seconds} seconds")
+"Server-provided reset time is in the past, using default cooldown of %s seconds", self.cooldown_seconds)
                 except Exception as e:
                     # Fallback to default cooldown on error
                     disabled_until = datetime.now() + timedelta(seconds=self.cooldown_seconds)
                     logger.error(
-    f"Error processing reset time {reset_time_ms}, using default cooldown: {e}")
+"Error processing reset time %s, using default cooldown: %s", reset_time_ms, e)
             else:
                 # Use default cooldown period
                 disabled_until = datetime.now() + timedelta(seconds=self.cooldown_seconds)
                 logger.info(
-    f"No reset time provided, using default cooldown of {self.cooldown_seconds} seconds")
+"No reset time provided, using default cooldown of %s seconds", self.cooldown_seconds)
 
             self.disabled_until[key] = disabled_until
             logger.warning(
-    f"API key {self._mask_key(key)} has been disabled until {disabled_until}.")
-
-    @staticmethod
-    def _mask_key(key: str) -> str:
-        """Mask an API key for logging purposes."""
-        if len(key) <= 8:
-            return "****"
-        return key[:4] + "****" + key[-4:]
+    "API key %s has been disabled until %s.", _mask_key(key), disabled_until)

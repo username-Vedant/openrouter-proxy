@@ -29,14 +29,14 @@ if __name__ == "__main__":
     # If host is 0.0.0.0, use actual local IP for display
     display_host = get_local_ip() if host == "0.0.0.0" else host
 
-    logger.info(f"Starting OpenRouter Proxy on {host}:{port}")
-    logger.info(f"API URL: http://{display_host}:{port}/api/v1")
-    logger.info(f"Health check: http://{display_host}:{port}/health")
+    logger.warning("Starting OpenRouter Proxy on %s:%s", host, port)
+    logger.warning("API URL: http://%s:%s/api/v1", display_host, port)
+    logger.info("Health check: http://%s:%s/health", display_host, port)
 
     # Configure log level for HTTP access logs
     log_config = uvicorn.config.LOGGING_CONFIG
     http_log_level = config["server"].get("http_log_level", "INFO").upper()
     log_config["loggers"]["uvicorn.access"]["level"] = http_log_level
-    logger.info(f"HTTP access log level set to {http_log_level}")
+    logger.info("HTTP access log level set to %s", http_log_level)
 
     uvicorn.run(app, host=host, port=port, log_config=log_config)

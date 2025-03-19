@@ -58,8 +58,8 @@ async def proxy_endpoint(
     # Log the full request URL including query parameters
     full_url = str(request.url).replace(str(request.base_url), "/")
     logger.info(
-        "Proxying request to %(full_url)s (Public: %(is_public)s, Binary: %(is_binary)s)",
-        {"full_url": full_url, "is_public": is_public, "is_binary": is_binary},
+        "Proxying request to %s (Public: %s, Binary: %s)",
+        full_url, is_public, is_binary
     )
 
     # Parse request body (if any)
@@ -84,10 +84,10 @@ async def proxy_endpoint(
                 ):  # This indicates a model variant like :free, :beta, etc.
                     base_model, variant = model.split(":", 1)
                     model_variant = f"{base_model} with {variant} tier"
-                    logger.info(f"Using model variant: {model_variant}")
+                    logger.info("Using model variant: %s", model_variant)
 
     except Exception as e:
-        logger.debug(f"Could not parse request body: {str(e)}")
+        logger.debug("Could not parse request body: %s", str(e))
         request_body = None
 
     # For binary, models endpoint, non-OpenAI-compatible endpoints or requests with model-specific parameters, fall back to httpx
@@ -120,7 +120,7 @@ async def proxy_endpoint(
             )
 
     except Exception as e:
-        logger.error(f"Error proxying request: {str(e)}")
+        logger.error("Error proxying request: %s", str(e))
         raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
 
 
@@ -174,10 +174,10 @@ async def handle_chat_completions(
                     # Send the end marker
                     yield b"data: [DONE]\n\n"
                 except Exception as e:
-                    logger.error(f"Error in streaming response: {str(e)}")
+                    logger.error("Error in streaming response: %s", str(e))
                     # Check if this is a rate limit error
                     if "rate limit" in str(e).lower() and api_key:
-                        logger.warning(f"Rate limit detected in stream. Disabling key.")
+                        logger.warning("Rate limit detected in stream. Disabling key.")
                         await key_manager.disable_key(
                             api_key, None
                         )  # Disable without reset time
@@ -192,24 +192,23 @@ async def handle_chat_completions(
                     "X-Accel-Buffering": "no",
                 },
             )
-        else:
-            # Non-streaming request
-            logger.info("Making regular chat completion request")
+        # Non-streaming request
+        logger.info("Making regular chat completion request")
 
-            response = await client.chat.completions.create(
-                **completion_args, extra_headers=forward_headers, extra_body=extra_body
-            )
+        response = await client.chat.completions.create(
+            **completion_args, extra_headers=forward_headers, extra_body=extra_body
+        )
 
-            # Return the response as JSON
-            return Response(
-                content=json.dumps(response.model_dump()), media_type="application/json"
-            )
+        # Return the response as JSON
+        return Response(
+            content=json.dumps(response.model_dump()), media_type="application/json"
+        )
     except Exception as e:
-        logger.error(f"Error in chat completions: {str(e)}")
+        logger.error("Error in chat completions: %s", str(e))
         # Check if this is a rate limit error
         if "rate limit" in str(e).lower() and api_key:
             logger.warning(
-                f"Rate limit reached for API key. Disabling key and retrying."
+                "Rate limit reached for API key. Disabling key and retrying."
             )
             await key_manager.disable_key(api_key, None)
 
@@ -222,9 +221,7 @@ async def handle_chat_completions(
                 )
 
         # Raise the exception
-        raise HTTPException(
-            status_code=500, detail=f"Error processing chat completion: {str(e)}"
-        )
+        raise HTTPException(500, f"Error processing chat completion: {str(e)}")
 
 
 async def proxy_with_httpx(
@@ -291,16 +288,16 @@ async def proxy_with_httpx(
                 # Special handling for models endpoint
                 if "/models" in path and openrouter_resp.status_code >= 400:
                     logger.error(
-                        f"Error fetching models: {openrouter_resp.status_code}"
+                        "Error fetching models: %s", openrouter_resp.status_code
                     )
                     error_body = await openrouter_resp.aread()
                     logger.error(
-                        f"Models endpoint error response: {error_body.decode('utf-8', errors='replace')}"
+                        "Models endpoint error response: %s", error_body.decode('utf-8', errors='replace')
                     )
 
             except httpx.ConnectError as e:
                 logger.error(
-                    f"Connection error to OpenRouter at {req_kwargs['url']}: {str(e)}"
+                    "Connection error to OpenRouter at %s: %s", req_kwargs['url'], str(e)
                 )
                 if "/models" in path:
                     # For models endpoint, we'll return a basic error response
@@ -341,7 +338,7 @@ async def proxy_with_httpx(
                             if line.startswith("data: "):
                                 data = line[6:]  # Get data without 'data: ' prefix
                                 if data == "[DONE]":
-                                    yield f"data: [DONE]\n\n".encode("utf-8")
+                                    yield "data: [DONE]\n\n".encode("utf-8")
                                 else:
                                     # Forward the original data without reformatting
                                     yield f"{line}\n\n".encode("utf-8")
@@ -366,7 +363,7 @@ async def proxy_with_httpx(
 
             if has_rate_limit_error and current_key:
                 logger.warning(
-                    f"Rate limit reached for API key. Disabling key and retrying."
+                    "Rate limit reached for API key. Disabling key and retrying."
                 )
                 await key_manager.disable_key(current_key, reset_time_ms)
 
@@ -389,17 +386,17 @@ async def proxy_with_httpx(
             )
 
         except httpx.ConnectError as e:
-            logger.error(f"Connection error to OpenRouter: {str(e)}")
+            logger.error("Connection error to OpenRouter: %s", str(e))
             raise HTTPException(
                 status_code=503, detail="Unable to connect to OpenRouter API"
             )
         except httpx.TimeoutException as e:
-            logger.error(f"Timeout connecting to OpenRouter: {str(e)}")
+            logger.error("Timeout connecting to OpenRouter: %s", str(e))
             raise HTTPException(
                 status_code=504, detail="OpenRouter API request timed out"
             )
         except Exception as e:
-            logger.error(f"Error proxying request with httpx: {str(e)}")
+            logger.error("Error proxying request with httpx: %s", str(e))
             raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
 
 
