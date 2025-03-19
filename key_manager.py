@@ -1,4 +1,3 @@
-import sys
 #!/usr/bin/env python3
 """
 API Key management module for OpenRouter API Proxy.
@@ -6,12 +5,14 @@ Implements key rotation and rate limit handling.
 """
 
 import asyncio
+import sys
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 
 from config import logger
+
 
 class KeyManager:
     """Manages OpenRouter API keys, including rotation and rate limit handling."""
