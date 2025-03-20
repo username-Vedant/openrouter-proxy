@@ -4,10 +4,10 @@ Utility functions for OpenRouter API Proxy.
 """
 
 import socket
+import json
 from typing import Optional, Tuple
 
 from fastapi import Header, HTTPException
-from httpx import Response
 from openai import APIError
 
 from config import logger
@@ -82,38 +82,38 @@ def check_rate_limit_openai(err: APIError) -> Tuple[bool, Optional[int]]:
 
     return has_rate_limit_error, reset_time_ms
 
-def check_rate_limit_error(response: Response) -> Tuple[bool, Optional[int]]:
+
+def check_rate_limit(data: str) -> Tuple[bool, Optional[int]]:
     """
-    Check for rate limit error in response.
+    Check for rate limit error.
 
     Args:
-        response: Response from OpenRouter API
+        data: response line
 
     Returns:
         Tuple (has_rate_limit_error, reset_time_ms)
     """
     has_rate_limit_error = False
     reset_time_ms = None
+    try:
+        err = json.loads(data)
+    except Exception as e:
+        logger.warning('Json.loads error %s', e)
+        return has_rate_limit_error, reset_time_ms
+    if not isinstance(err, dict) or "error" not in err:
+        return has_rate_limit_error, reset_time_ms
 
-    # Check response content if it's JSON
-    content_type = response.headers.get('content-type', '')
-    if 'application/json' in content_type:
-        try:
-            data = response.json()
-            if (data.get("error", {}).get("status", '') == RATE_LIMIT_ERROR_CODE and
-                    data.get("error", {}).get("message", '') == RATE_LIMIT_ERROR_MESSAGE):
-                has_rate_limit_error = True
+    code = err["error"].get("code", 0)
+    msg = err["error"].get("message", 0)
+    try:
+        x_rate_limit = int(err["error"]["metadata"]["headers"]["X-RateLimit-Reset"])
+    except (TypeError, KeyError):
+        x_rate_limit = None
 
-                # Extract reset time from metadata if available
-                if "X-RateLimit-Reset" in data.get("error", {}).get("metadata", {}).get("headers", {}):
-                    try:
-                        reset_time_ms = int(data[
-    "error"]["metadata"]["headers"]["X-RateLimit-Reset"])
-                        logger.info(
-    "Found X-RateLimit-Reset in response metadata: %s", reset_time_ms)
-                    except (ValueError, TypeError) as e:
-                        logger.warning("Failed to parse X-RateLimit-Reset from metadata: %s", e)
-        except Exception as e:
-            logger.debug("Error parsing JSON response: %s", e)
+    if x_rate_limit :
+        has_rate_limit_error = True
+        reset_time_ms = x_rate_limit
+    elif code == RATE_LIMIT_ERROR_CODE and msg == RATE_LIMIT_ERROR_MESSAGE:
+        has_rate_limit_error = True
 
     return has_rate_limit_error, reset_time_ms

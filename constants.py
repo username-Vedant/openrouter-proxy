@@ -15,5 +15,11 @@ RATE_LIMIT_ERROR_MESSAGE = "Rate limit exceeded: free-models-per-day"
 # Public endpoints that don't require authentication
 PUBLIC_ENDPOINTS = ["/api/v1/models"]
 
-# Endpoints that may return binary data
-BINARY_ENDPOINTS = ["/api/v1/generation"]
+# Use httpx for proxy
+HTTPX_ENDPOINTS = ["/api/v1/generation", "/api/v1/models"]
+
+# Use openai for proxy
+OPENAI_ENDPOINTS = ["/api/v1/completions", "/api/v1/chat/completions"]
+
+# Read line by line
+COMPLETION_ENDPOINTS = ["/api/v1/completions", "/api/v1/chat/completions"]
