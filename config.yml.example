@@ -16,4 +16,4 @@ openrouter:
     - "sk-or-v1-your-third-api-key"
   
   # Time in seconds to temporarily disable a key when rate limit is reached
-  rate_limit_cooldown: 7200  # 2 hours 
+  rate_limit_cooldown: 14400  # 4 hours

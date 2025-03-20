@@ -11,9 +11,11 @@ import yaml
 from openai import AsyncOpenAI  # Use the OpenAI library
 
 
-# Load configuration from config.yml
 def load_config():
-    with open("config.yml", "r") as file:
+    """
+    Load configuration from config.yml
+    """
+    with open("config.yml", encoding="utf-8") as file:
         return yaml.safe_load(file)
 
 # Get configuration
@@ -112,9 +114,9 @@ async def test_openrouter_streaming():
 
         print("\n" + "-" * 50)
         if request_data["stream"]:
-          print("\nStream completed!")
+            print("\nStream completed!")
         else:
-          print("\nNon-streaming response completed!")
+            print("\nNon-streaming response completed!")
 
     except Exception as e:
         print(f"Error occurred during test: {str(e)}")

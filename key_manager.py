@@ -14,7 +14,6 @@ from fastapi import HTTPException
 from config import logger
 
 
-@staticmethod
 def _mask_key(key: str) -> str:
     """Mask an API key for logging purposes."""
     if len(key) <= 8:

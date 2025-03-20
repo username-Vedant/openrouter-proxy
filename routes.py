@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any, AsyncGenerator
 import httpx
 from fastapi import APIRouter, Request, Header, HTTPException
 from fastapi.responses import StreamingResponse, Response
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIError
 
 from config import config, logger
 from constants import OPENROUTER_BASE_URL, PUBLIC_ENDPOINTS, BINARY_ENDPOINTS
@@ -17,6 +17,7 @@ from key_manager import KeyManager
 from utils import (
     verify_access_key,
     check_rate_limit_error,
+    check_rate_limit_openai,
 )
 
 # Create router
@@ -121,7 +122,7 @@ async def proxy_endpoint(
 
     except Exception as e:
         logger.error("Error proxying request: %s", str(e))
-        raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}") from e
 
 
 async def handle_chat_completions(
@@ -173,14 +174,17 @@ async def handle_chat_completions(
 
                     # Send the end marker
                     yield b"data: [DONE]\n\n"
-                except Exception as e:
-                    logger.error("Error in streaming response: %s", str(e))
+                except APIError as err:
+                    logger.error("Error in streaming response: %s", err)
                     # Check if this is a rate limit error
-                    if "rate limit" in str(e).lower() and api_key:
-                        logger.warning("Rate limit detected in stream. Disabling key.")
-                        await key_manager.disable_key(
-                            api_key, None
-                        )  # Disable without reset time
+                    if api_key:
+                        has_rate_limit_error_, reset_time_ms_ = check_rate_limit_openai(err)
+                        if has_rate_limit_error_:
+                            logger.warning("Rate limit detected in stream. Disabling key.")
+                            await key_manager.disable_key(
+                                api_key, reset_time_ms_
+                            )
+
 
             # Return a streaming response
             return StreamingResponse(
@@ -199,29 +203,33 @@ async def handle_chat_completions(
             **completion_args, extra_headers=forward_headers, extra_body=extra_body
         )
 
+        result = response.model_dump()
+        if 'error' in result:
+            raise APIError(result['error'].get("message", "Error"), None, body=result['error'])
+
         # Return the response as JSON
         return Response(
-            content=json.dumps(response.model_dump()), media_type="application/json"
+            content=json.dumps(result), media_type="application/json"
         )
-    except Exception as e:
+    except (APIError, Exception) as e:
         logger.error("Error in chat completions: %s", str(e))
         # Check if this is a rate limit error
-        if "rate limit" in str(e).lower() and api_key:
-            logger.warning(
-                "Rate limit reached for API key. Disabling key and retrying."
-            )
-            await key_manager.disable_key(api_key, None)
+        if api_key and isinstance(e, APIError):
+            has_rate_limit_error, reset_time_ms = check_rate_limit_openai(e)
+            if has_rate_limit_error:
+                logger.warning("Rate limit detected in stream. Disabling key.")
+                await key_manager.disable_key(api_key, reset_time_ms)
 
-            # Try again with a new key
-            new_api_key = await key_manager.get_next_key()
-            if new_api_key:
-                new_client = await get_openai_client(new_api_key)
-                return await handle_chat_completions(
-                    new_client, request, request_body, new_api_key, is_stream
-                )
+                # Try again with a new key
+                new_api_key = await key_manager.get_next_key()
+                if new_api_key:
+                    new_client = await get_openai_client(new_api_key)
+                    return await handle_chat_completions(
+                        new_client, request, request_body, new_api_key, is_stream
+                    )
 
         # Raise the exception
-        raise HTTPException(500, f"Error processing chat completion: {str(e)}")
+        raise HTTPException(500, f"Error processing chat completion: {str(e)}") from e
 
 
 async def proxy_with_httpx(
@@ -311,9 +319,7 @@ async def proxy_with_httpx(
                         status_code=503,
                         media_type="application/json",
                     )
-                raise HTTPException(
-                    status_code=503, detail="Unable to connect to OpenRouter API"
-                )
+                raise HTTPException(503, "Unable to connect to OpenRouter API") from e
 
             # Handle binary responses
             if is_binary:
@@ -387,17 +393,13 @@ async def proxy_with_httpx(
 
         except httpx.ConnectError as e:
             logger.error("Connection error to OpenRouter: %s", str(e))
-            raise HTTPException(
-                status_code=503, detail="Unable to connect to OpenRouter API"
-            )
+            raise HTTPException(503, "Unable to connect to OpenRouter API") from e
         except httpx.TimeoutException as e:
             logger.error("Timeout connecting to OpenRouter: %s", str(e))
-            raise HTTPException(
-                status_code=504, detail="OpenRouter API request timed out"
-            )
+            raise HTTPException(504, "OpenRouter API request timed out") from e
         except Exception as e:
             logger.error("Error proxying request with httpx: %s", str(e))
-            raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}")
+            raise HTTPException(500, f"Proxy error: {str(e)}") from e
 
 
 @router.get("/health")
