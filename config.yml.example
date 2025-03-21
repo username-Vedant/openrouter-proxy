@@ -17,3 +17,8 @@ openrouter:
   
   # Time in seconds to temporarily disable a key when rate limit is reached
   rate_limit_cooldown: 14400  # 4 hours
+
+# Proxy settings for outgoing requests to OpenRouter
+requestProxy:
+  enabled: false  # Set to true to enable proxy
+  url: "socks5://username:password@example.com:1080"  # Proxy URL with optional credentials in format username:password@host:port

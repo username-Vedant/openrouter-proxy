@@ -46,6 +46,11 @@ openrouter:
     - "sk-or-v1-your-first-api-key"
     - "sk-or-v1-your-second-api-key"
   rate_limit_cooldown: 14400  # Seconds to disable key after rate limit (4 hours)
+
+# Proxy settings for outgoing requests to OpenRouter
+requestProxy:
+  enabled: false    # Set to true to enable proxy
+  url: "socks5://username:password@example.com:1080"  # Proxy URL with optional credentials embedded
 ```
 
 ## Usage

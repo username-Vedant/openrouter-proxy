@@ -33,7 +33,18 @@ key_manager = KeyManager(
 # Function to create OpenAI client with the right API key
 async def get_openai_client(api_key: str) -> AsyncOpenAI:
     """Create an OpenAI client with the specified API key."""
-    return AsyncOpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+    client_params = {
+        "api_key": api_key,
+        "base_url": OPENROUTER_BASE_URL
+    }
+
+    # Add proxy configuration if enabled
+    if config.get("requestProxy", {}).get("enabled", False):
+        proxy_url = config["requestProxy"]["url"]
+        client_params["http_client"] = httpx.AsyncClient(proxy=proxy_url)
+        logger.info("Using proxy for OpenAI client: %s", proxy_url)
+
+    return AsyncOpenAI(**client_params)
 
 
 @router.api_route(
@@ -246,7 +257,15 @@ async def proxy_with_httpx(
     is_completion: bool,
 ) -> Response:
     """Fall back to httpx for endpoints not supported by the OpenAI SDK."""
-    async with httpx.AsyncClient(timeout=60.0) as client:  # Increase default timeout
+    client_kwargs = {"timeout": 60.0}  # Increase default timeout
+
+    # Add proxy configuration if enabled
+    if config.get("requestProxy", {}).get("enabled", False):
+        proxy_url = config["requestProxy"]["url"]
+        client_kwargs["proxy"] = proxy_url
+        logger.info("Using proxy for httpx client: %s", proxy_url)
+
+    async with httpx.AsyncClient(**client_kwargs) as client:
         try:
             headers = {
                 k: v
