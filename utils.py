@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 from fastapi import Header, HTTPException
 from openai import APIError
 
-from config import logger
+from config import config, logger
 from constants import RATE_LIMIT_ERROR_MESSAGE, RATE_LIMIT_ERROR_CODE
 
 
@@ -29,14 +29,12 @@ def get_local_ip() -> str:
 
 async def verify_access_key(
     authorization: Optional[str] = Header(None),
-    access_key: str = None,
 ) -> bool:
     """
     Verify the local access key for authentication.
 
     Args:
         authorization: Authorization header
-        access_key: Access key to verify
 
     Returns:
         True if authentication is successful
@@ -52,7 +50,7 @@ async def verify_access_key(
     if scheme.lower() != "bearer":
         raise HTTPException(status_code=401, detail="Invalid authentication scheme")
 
-    if token != access_key:
+    if token != config["server"]["access_key"]:
         raise HTTPException(status_code=401, detail="Invalid access key")
 
     return True
@@ -74,7 +72,7 @@ def check_rate_limit_openai(err: APIError) -> Tuple[bool, Optional[int]]:
         try:
             reset_time_ms = int(err.body["metadata"]["headers"]["X-RateLimit-Reset"])
             has_rate_limit_error = True
-        except Exception as _:
+        except (TypeError, KeyError):
             pass
 
     if reset_time_ms is None and RATE_LIMIT_ERROR_MESSAGE in err.message:
@@ -83,7 +81,7 @@ def check_rate_limit_openai(err: APIError) -> Tuple[bool, Optional[int]]:
     return has_rate_limit_error, reset_time_ms
 
 
-def check_rate_limit(data: str) -> Tuple[bool, Optional[int]]:
+def check_rate_limit(data: str or bytes) -> Tuple[bool, Optional[int]]:
     """
     Check for rate limit error.
 
@@ -99,21 +97,19 @@ def check_rate_limit(data: str) -> Tuple[bool, Optional[int]]:
         err = json.loads(data)
     except Exception as e:
         logger.warning('Json.loads error %s', e)
-        return has_rate_limit_error, reset_time_ms
-    if not isinstance(err, dict) or "error" not in err:
-        return has_rate_limit_error, reset_time_ms
+    else:
+        if isinstance(err, dict) and "error" in err:
+            code = err["error"].get("code", 0)
+            msg = err["error"].get("message", 0)
+            try:
+                x_rate_limit = int(err["error"]["metadata"]["headers"]["X-RateLimit-Reset"])
+            except (TypeError, KeyError):
+                x_rate_limit = 0
 
-    code = err["error"].get("code", 0)
-    msg = err["error"].get("message", 0)
-    try:
-        x_rate_limit = int(err["error"]["metadata"]["headers"]["X-RateLimit-Reset"])
-    except (TypeError, KeyError):
-        x_rate_limit = None
-
-    if x_rate_limit :
-        has_rate_limit_error = True
-        reset_time_ms = x_rate_limit
-    elif code == RATE_LIMIT_ERROR_CODE and msg == RATE_LIMIT_ERROR_MESSAGE:
-        has_rate_limit_error = True
+            if x_rate_limit > 0:
+                has_rate_limit_error = True
+                reset_time_ms = x_rate_limit
+            elif code == RATE_LIMIT_ERROR_CODE and msg == RATE_LIMIT_ERROR_MESSAGE:
+                has_rate_limit_error = True
 
     return has_rate_limit_error, reset_time_ms

@@ -53,10 +53,7 @@ async def proxy_endpoint(
 
     # Verify authorization for non-public endpoints
     if not is_public:
-        await verify_access_key(
-            authorization=authorization,
-            access_key=config["server"]["access_key"],
-        )
+        await verify_access_key(authorization=authorization)
 
     # Log the full request URL including query parameters
     full_url = str(request.url).replace(str(request.base_url), "/")
@@ -68,7 +65,14 @@ async def proxy_endpoint(
     # Parse request body (if any)
     request_body = None
     is_stream = False
-
+    # Get API key to use
+    if not is_public:
+        api_key = await key_manager.get_next_key()
+        if not api_key:
+            raise HTTPException(status_code=503, detail="No available API keys")
+    else:
+        # For public endpoints, we don't need an API key
+        api_key = ""
     try:
         body_bytes = await request.body()
         if body_bytes:
@@ -93,21 +97,12 @@ async def proxy_endpoint(
         logger.debug("Could not parse request body: %s", str(e))
         request_body = None
 
-    # For binary, models endpoint, non-OpenAI-compatible endpoints or requests with model-specific parameters, fall back to httpx
+    # For models, non-OpenAI-compatible endpoints or requests with model-specific parameters, fall back to httpx
     if is_httpx or not is_openai:
-        return await proxy_with_httpx(request, path, is_public, is_stream, is_completion)
+        return await proxy_with_httpx(request, path, api_key, is_stream, is_completion)
 
     # For OpenAI-compatible endpoints, use the OpenAI library
     try:
-        # Get API key to use
-        if not is_public:
-            api_key = await key_manager.get_next_key()
-            if not api_key:
-                raise HTTPException(status_code=503, detail="No available API keys")
-        else:
-            # For public endpoints, we don't need an API key
-            api_key = ""
-
         # Create an OpenAI client
         client = await get_openai_client(api_key)
 
@@ -119,7 +114,7 @@ async def proxy_endpoint(
         else:
             # Fallback for other endpoints
             return await proxy_with_httpx(
-                request, path, is_public, is_stream, is_completion
+                request, path, api_key, is_stream, is_completion
             )
 
     except Exception as e:
@@ -234,10 +229,19 @@ async def handle_completions(
         raise HTTPException(500, f"Error processing chat completion: {str(e)}") from e
 
 
+async def _check_httpx_err(body: str or bytes, api_key: str or None):
+    if api_key and (isinstance(body, str) and body.startswith("data: ") or (
+            isinstance(body, bytes) and body.startswith(b"data: "))):
+        body = body[6:]
+        has_rate_limit_error, reset_time_ms = check_rate_limit(body)
+        if has_rate_limit_error:
+            logger.warning("Rate limit detected in stream. Disabling key.")
+            await key_manager.disable_key(api_key, reset_time_ms)
+
 async def proxy_with_httpx(
     request: Request,
     path: str,
-    is_public: bool,
+    api_key: str,
     is_stream: bool,
     is_completion: bool,
 ) -> Response:
@@ -260,20 +264,20 @@ async def proxy_with_httpx(
             if request.query_params:
                 req_kwargs["url"] = f"{req_kwargs['url']}?{request.url.query}"
 
-            if not is_public:
-                # For authenticated endpoints, use API key rotation
-                api_key = await key_manager.get_next_key()
+            if api_key:
                 req_kwargs["headers"]["Authorization"] = f"Bearer {api_key}"
 
 
             openrouter_resp = await client.request(**req_kwargs)
             if not is_stream:
+                body = await openrouter_resp.aread()
+                await _check_httpx_err(body, api_key)
                 return Response(
-                    content=await openrouter_resp.aread(),
+                    content=body,
                     status_code=openrouter_resp.status_code,
                     headers=dict(openrouter_resp.headers),
                 )
-            if is_public and not is_completion:
+            if not api_key and not is_completion:
                 return StreamingResponse(
                     openrouter_resp.aiter_bytes(),
                     status_code=openrouter_resp.status_code,
@@ -296,19 +300,13 @@ async def proxy_with_httpx(
                             yield f"{line}\n\n".encode("utf-8")
                 except Exception as err:
                     logger.error("stream_completion error: %s", err)
-                if not is_public and data.startswith('data: '):
-                    data = data[6:]
-                    has_rate_limit_error, reset_time_ms = check_rate_limit(data)
-                    if has_rate_limit_error:
-                        logger.warning("Rate limit detected in stream. Disabling key.")
-                        await key_manager.disable_key(api_key, reset_time_ms)
+                await _check_httpx_err(data, api_key)
 
             return StreamingResponse(
                 stream_completion(),
                 status_code=openrouter_resp.status_code,
                 headers=dict(openrouter_resp.headers),
             )
-
         except httpx.ConnectError as e:
             logger.error("Connection error to OpenRouter: %s", str(e))
             raise HTTPException(503, "Unable to connect to OpenRouter API") from e

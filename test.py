@@ -50,8 +50,10 @@ async def test_openrouter_streaming():
     )
 
     headers = {
-        "HTTP-Referer": config.get("test", {}).get("http_referer", "http://localhost"),  # Optional. Site URL for rankings on openrouter.ai.
-        "X-Title": config.get("test", {}).get("x_title", "Local Test"),  # Optional. Site title for rankings on openrouter.ai.
+        # Optional. Site URL for rankings on openrouter.ai.
+        "HTTP-Referer": config.get("test", {}).get("http_referer", "http://localhost"),
+        # Optional. Site title for rankings on openrouter.ai.
+        "X-Title": config.get("test", {}).get("x_title", "Local Test"),
     }
     if not ACCESS_KEY:
         print("No valid access key found. Request may fail if server requires authentication.")
