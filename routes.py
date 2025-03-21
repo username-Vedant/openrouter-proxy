@@ -142,7 +142,7 @@ async def handle_completions(
 
         # Move non-standard parameters that OpenAI SDK doesn't support directly to extra_body
         extra_body = {}
-        openai_unsupported_params = ["include_reasoning", "transforms", "route"]
+        openai_unsupported_params = ["include_reasoning", "transforms", "route", "provider"]
         for param in openai_unsupported_params:
             if param in completion_args:
                 extra_body[param] = completion_args.pop(param)
