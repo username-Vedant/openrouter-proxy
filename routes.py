@@ -16,7 +16,7 @@ from constants import OPENROUTER_BASE_URL, PUBLIC_ENDPOINTS, HTTPX_ENDPOINTS, OP
 from key_manager import KeyManager
 from utils import (
     verify_access_key,
-    check_rate_limit_openai,
+    check_rate_limit_chat,
     check_rate_limit
 )
 
@@ -128,8 +128,10 @@ async def proxy_endpoint(
                 request, path, api_key, is_stream, is_completion
             )
 
-    except Exception as e:
+    except (Exception, HTTPException) as e:
         logger.error("Error proxying request: %s", str(e))
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}") from e
 
 
@@ -143,13 +145,19 @@ async def handle_completions(
     """Handle chat completions using the OpenAI client."""
     try:
         # Extract headers to forward
-        forward_headers = {}
-        for k, v in request.headers.items():
-            if k.lower() in ["http-referer", "x-title"]:
-                forward_headers[k] = v
+        forward_headers = {
+            k: v
+            for k, v in request.headers.items()
+            if k.lower()
+               not in ["host", "content-length", "connection", "authorization"]
+        }
 
         # Create a copy of the request body to modify
         completion_args = request_body.copy()
+
+        # Ensure we don't pass 'stream' twice
+        if "stream" in completion_args:
+            del completion_args["stream"]
 
         # Move non-standard parameters that OpenAI SDK doesn't support directly to extra_body
         extra_body = {}
@@ -157,10 +165,6 @@ async def handle_completions(
         for param in openai_unsupported_params:
             if param in completion_args:
                 extra_body[param] = completion_args.pop(param)
-
-        # Ensure we don't pass 'stream' twice
-        if "stream" in completion_args:
-            del completion_args["stream"]
 
         # Create a properly formatted request to the OpenAI API
         if is_stream:
@@ -186,7 +190,7 @@ async def handle_completions(
                     logger.error("Error in streaming response: %s", err)
                     # Check if this is a rate limit error
                     if api_key:
-                        has_rate_limit_error_, reset_time_ms_ = check_rate_limit_openai(err)
+                        has_rate_limit_error_, reset_time_ms_ = check_rate_limit_chat(err)
                         if has_rate_limit_error_:
                             logger.warning("Rate limit detected in stream. Disabling key.")
                             await key_manager.disable_key(
@@ -221,26 +225,30 @@ async def handle_completions(
         )
     except (APIError, Exception) as e:
         logger.error("Error in chat completions: %s", str(e))
-        # Check if this is a rate limit error
-        if api_key and isinstance(e, APIError):
-            has_rate_limit_error, reset_time_ms = check_rate_limit_openai(e)
-            if has_rate_limit_error:
-                logger.warning("Rate limit detected in stream. Disabling key.")
-                await key_manager.disable_key(api_key, reset_time_ms)
+        code = 500
+        detail = f"Error processing chat completion: {str(e)}"
+        if isinstance(e, APIError):
+            # Check if this is a rate limit error
+            if api_key:
+                has_rate_limit_error, reset_time_ms = check_rate_limit_chat(e)
+                if has_rate_limit_error:
+                    logger.warning("Rate limit detected in stream. Disabling key.")
+                    await key_manager.disable_key(api_key, reset_time_ms)
 
-                # Try again with a new key
-                new_api_key = await key_manager.get_next_key()
-                if new_api_key:
-                    new_client = await get_openai_client(new_api_key)
-                    return await handle_completions(
-                        new_client, request, request_body, new_api_key, is_stream
-                    )
-
+                    # Try again with a new key
+                    new_api_key = await key_manager.get_next_key()
+                    if new_api_key:
+                        new_client = await get_openai_client(new_api_key)
+                        return await handle_completions(
+                            new_client, request, request_body, new_api_key, is_stream
+                        )
+            code = e.code or code
+            detail = e.body or detail
         # Raise the exception
-        raise HTTPException(500, f"Error processing chat completion: {str(e)}") from e
+        raise HTTPException(code, detail) from e
 
 
-async def _check_httpx_err(body: str or bytes, api_key: str or None):
+async def _check_httpx_err(body: str | bytes, api_key: str | None):
     if api_key and (isinstance(body, str) and body.startswith("data: ") or (
             isinstance(body, bytes) and body.startswith(b"data: "))):
         body = body[6:]
