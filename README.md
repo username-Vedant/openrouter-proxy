@@ -73,9 +73,8 @@ For Linux systems with systemd, you can install the proxy as a system service:
 
 1. Make sure you've created and configured your `config.yml` file
 2. Run the installation script:
-```
-sudo ./service_install.sh
-```
+
+```sudo ./service_install.sh``` or ```sudo ./service_install_venv.sh``` for venv.
 
 This will create a systemd service that starts automatically on boot.
 
