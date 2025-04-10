@@ -65,7 +65,7 @@ Start the server:
 python main.py
 ```
 
-The proxy will be available at `http://localhost:5555` (or the host/port configured in your config file).
+The proxy will be available at `http://localhost:5555/api/v1` (or the host/port configured in your config file).
 
 ### Installing as a Systemd Service
 
@@ -110,15 +110,3 @@ The proxy supports all OpenRouter API v1 endpoints through the following endpoin
 It also provides a health check endpoint:
 
 - `/health` - Health check endpoint that returns `{"status": "ok"}`
-
-## Dependencies
-
-- FastAPI - Web framework
-- uvicorn - ASGI server
-- httpx - HTTP client
-- OpenAI - SDK for handling OpenAI-compatible endpoints
-- PyYAML - YAML parsing
-
-## License
-
-MIT 
