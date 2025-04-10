@@ -15,10 +15,10 @@ openrouter:
     - "sk-or-v1-your-second-api-key"
     - "sk-or-v1-your-third-api-key"
   
-  # Time in seconds to temporarily disable a key when rate limit is reached
+  # Time in seconds to temporarily disable a key when rate limit is reached by default
   rate_limit_cooldown: 14400  # 4 hours
 
 # Proxy settings for outgoing requests to OpenRouter
 requestProxy:
   enabled: false  # Set to true to enable proxy
-  url: "socks5://username:password@example.com:1080"  # Proxy URL with optional credentials in format username:password@host:port
+  url: "socks5://username:password@example.com:1080"  # Proxy URL with optional credentials embedded

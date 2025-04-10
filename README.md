@@ -45,7 +45,10 @@ openrouter:
   keys:
     - "sk-or-v1-your-first-api-key"
     - "sk-or-v1-your-second-api-key"
-  rate_limit_cooldown: 14400  # Seconds to disable key after rate limit (4 hours)
+    - "sk-or-v1-your-third-api-key"
+
+  # Time in seconds to temporarily disable a key when rate limit is reached by default
+  rate_limit_cooldown: 14400  # 4 hours
 
 # Proxy settings for outgoing requests to OpenRouter
 requestProxy:
