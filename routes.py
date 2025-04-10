@@ -196,6 +196,8 @@ async def handle_completions(
                             await key_manager.disable_key(
                                 api_key, reset_time_ms_
                             )
+                        elif isinstance(err.body, dict):
+                            yield json.dumps(err.body).encode("utf-8")
 
 
             # Return a streaming response

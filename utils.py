@@ -57,7 +57,7 @@ async def verify_access_key(
     return True
 
 
-def parse_google_rate_error(data: str) -> Optional[int]:
+def is_google_error(data: str) -> bool:
     # data = {
     #     'error': {
     #         'code': 429,
@@ -78,34 +78,14 @@ def parse_google_rate_error(data: str) -> Optional[int]:
     #         ]
     #     }
     # }
-    reset_time_ms = None
-    time_units = {'s': 1000, 'm': 60000, 'h': 3600000}
-    try:
-        data = json.loads(data)
-    except Exception as e:
-        logger.info("Json.loads error %s", e)
-    else:
-        retry_delay_ms = None
+    if data:
         try:
-            message = data["error"].get("message", "")
-
-            retry_info = next((item for item in data['error']['details'] if
-                               item.get('@type') == 'type.googleapis.com/google.rpc.RetryInfo'), {})
-            retry_delay = retry_info.get('retryDelay', '0s')
-
-            num_part = ''.join(c for c in retry_delay if c.isdigit())
-            unit_part = ''.join(c for c in retry_delay if c.isalpha())
-
-            retry_delay_ms = int(num_part) * time_units.get(unit_part, 1000) if num_part else 0
-        except (TypeError, KeyError) as err:
-            logger.info("google reply parsing error %s", err)
+            data = json.loads(data)
+        except Exception as e:
+            logger.info("Json.loads error %s", e)
         else:
-            logger.info("google rate limit %s, retry: %s", message, retry_delay)
-
-        if retry_delay_ms:
-            reset_time_ms = int(time.time() * 1000) + retry_delay_ms
-
-    return reset_time_ms
+            return data["error"].get("status", "") == "RESOURCE_EXHAUSTED"
+    return False
 
 def check_rate_limit_chat(err: APIError) -> Tuple[bool, Optional[int]]:
     """
@@ -126,9 +106,8 @@ def check_rate_limit_chat(err: APIError) -> Tuple[bool, Optional[int]]:
             try:
                 reset_time_ms = int(err.body["metadata"]["headers"]["X-RateLimit-Reset"])
             except (TypeError, KeyError):
-                raw = err.body.get("metadata", {}).get("raw", "")
-                if raw and has_rate_limit_error:
-                    reset_time_ms = parse_google_rate_error(raw)
+                if is_google_error(err.body.get("metadata", {}).get("raw", "")):
+                    has_rate_limit_error = False
 
     return has_rate_limit_error, reset_time_ms
 
@@ -155,11 +134,9 @@ def check_rate_limit(data: str or bytes) -> Tuple[bool, Optional[int]]:
             try:
                 x_rate_limit = int(err["error"]["metadata"]["headers"]["X-RateLimit-Reset"])
             except (TypeError, KeyError):
-                raw = err["error"].get("metadata", {}).get("raw", "")
-                if raw and code == RATE_LIMIT_ERROR_CODE:
-                    x_rate_limit = parse_google_rate_error(raw)
-                else:
-                    x_rate_limit = 0
+                if code == RATE_LIMIT_ERROR_CODE and is_google_error(err["error"].get("metadata", {}).get("raw", "")):
+                    return False, None
+                x_rate_limit = 0
 
             if x_rate_limit > 0:
                 has_rate_limit_error = True
