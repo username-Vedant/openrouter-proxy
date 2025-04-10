@@ -12,7 +12,14 @@ from fastapi.responses import StreamingResponse, Response
 from openai import AsyncOpenAI, APIError
 
 from config import config, logger
-from constants import OPENROUTER_BASE_URL, PUBLIC_ENDPOINTS, HTTPX_ENDPOINTS, OPENAI_ENDPOINTS, COMPLETION_ENDPOINTS
+from constants import (
+    OPENROUTER_BASE_URL,
+    PUBLIC_ENDPOINTS,
+    HTTPX_ENDPOINTS,
+    OPENAI_ENDPOINTS,
+    COMPLETION_ENDPOINTS,
+    MODELS_ENDPOINTS,
+)
 from key_manager import KeyManager
 from utils import (
     verify_access_key,
@@ -262,6 +269,24 @@ async def _check_httpx_err(body: str | bytes, api_key: str | None):
         logger.warning("Rate limit detected in stream. Disabling key.")
         await key_manager.disable_key(api_key, reset_time_ms)
 
+def _remove_paid_models(body: bytes) -> bytes:
+    # {'prompt': '0', 'completion': '0', 'request': '0', 'image': '0', 'web_search': '0', 'internal_reasoning': '0'}
+    prices =['prompt', 'completion', 'request', 'image', 'web_search', 'internal_reasoning']
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning("Error models deserialize: %s", str(e))
+    else:
+        if isinstance(data.get("data"), list):
+            clear_data = []
+            for model in data["data"]:
+                if all(model.get("pricing", {}).get(k, "1") == "0" for k in prices):
+                    clear_data.append(model)
+            if clear_data:
+                data["data"] = clear_data
+                body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    return body
+
 async def proxy_with_httpx(
     request: Request,
     path: str,
@@ -271,6 +296,8 @@ async def proxy_with_httpx(
 ) -> Response:
     """Fall back to httpx for endpoints not supported by the OpenAI SDK."""
     client_kwargs = {"timeout": 60.0}  # Increase default timeout
+    free_only = (any(f"/api/v1{path}" == ep for ep in MODELS_ENDPOINTS) and
+                 config["openrouter"].get("free_only", False))
 
     # Add proxy configuration if enabled
     if config.get("requestProxy", {}).get("enabled", False):
@@ -278,28 +305,26 @@ async def proxy_with_httpx(
         client_kwargs["proxy"] = proxy_url
         logger.info("Using proxy for httpx client: %s", proxy_url)
 
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower()
+           not in ["host", "content-length", "connection", "authorization"]
+    }
+    req_kwargs = {
+        "method": request.method,
+        "url": f"{OPENROUTER_BASE_URL}{path}",
+        "headers": headers,
+        "content": await request.body(),
+    }
+    # Add query parameters if they exist
+    if request.query_params:
+        req_kwargs["url"] = f"{req_kwargs['url']}?{request.url.query}"
+
+    if api_key:
+        req_kwargs["headers"]["Authorization"] = f"Bearer {api_key}"
     async with httpx.AsyncClient(**client_kwargs) as client:
         try:
-            headers = {
-                k: v
-                for k, v in request.headers.items()
-                if k.lower()
-                not in ["host", "content-length", "connection", "authorization"]
-            }
-            req_kwargs = {
-                "method": request.method,
-                "url": f"{OPENROUTER_BASE_URL}{path}",
-                "headers": headers,
-                "content": await request.body(),
-            }
-            # Add query parameters if they exist
-            if request.query_params:
-                req_kwargs["url"] = f"{req_kwargs['url']}?{request.url.query}"
-
-            if api_key:
-                req_kwargs["headers"]["Authorization"] = f"Bearer {api_key}"
-
-
             openrouter_resp = await client.request(**req_kwargs)
             headers = dict(openrouter_resp.headers)
             # Content has already been decoded
@@ -309,6 +334,8 @@ async def proxy_with_httpx(
             if not is_stream:
                 body = await openrouter_resp.aread()
                 await _check_httpx_err(body, api_key)
+                if free_only:
+                    body = _remove_paid_models(body)
                 return Response(
                     content=body,
                     status_code=openrouter_resp.status_code,

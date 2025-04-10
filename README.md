@@ -49,6 +49,7 @@ openrouter:
 
   # Time in seconds to temporarily disable a key when rate limit is reached by default
   rate_limit_cooldown: 14400  # 4 hours
+  free_only: false # try to show only free models
 
 # Proxy settings for outgoing requests to OpenRouter
 requestProxy:

@@ -3,6 +3,9 @@
 Constants used in OpenRouter API Proxy.
 """
 
+# Config
+CONFIG_FILE = "config.yml"
+
 # OpenRouter API base URL
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -14,6 +17,8 @@ PUBLIC_ENDPOINTS = ["/api/v1/models"]
 
 # Use httpx for proxy
 HTTPX_ENDPOINTS = ["/api/v1/generation", "/api/v1/models"]
+
+MODELS_ENDPOINTS = ["/api/v1/models"]
 
 # Use openai for proxy
 OPENAI_ENDPOINTS = ["/api/v1/completions", "/api/v1/chat/completions"]

@@ -10,8 +10,8 @@ from typing import Dict, Any
 
 import yaml
 
-# Constants
-CONFIG_FILE = "config.yml"
+from constants import CONFIG_FILE
+
 
 def load_config() -> Dict[str, Any]:
     """Load configuration from YAML file."""
