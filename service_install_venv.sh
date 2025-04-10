@@ -11,7 +11,7 @@ fi
 # Get the absolute path of the application directory
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="openrouter-proxy"
-SERVICE_NAME="${APP_NAME}-venv.service" # Changed service name slightly
+SERVICE_NAME="${APP_NAME}.service"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
 VENV_DIR="${APP_DIR}/venv"
 
