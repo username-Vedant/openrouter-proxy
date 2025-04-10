@@ -251,13 +251,16 @@ async def handle_completions(
 
 
 async def _check_httpx_err(body: str | bytes, api_key: str | None):
-    if api_key and (isinstance(body, str) and body.startswith("data: ") or (
+    # too big for error
+    if len(body) > 4000 or not api_key:
+        return
+    if (isinstance(body, str) and body.startswith("data: ") or (
             isinstance(body, bytes) and body.startswith(b"data: "))):
         body = body[6:]
-        has_rate_limit_error, reset_time_ms = check_rate_limit(body)
-        if has_rate_limit_error:
-            logger.warning("Rate limit detected in stream. Disabling key.")
-            await key_manager.disable_key(api_key, reset_time_ms)
+    has_rate_limit_error, reset_time_ms = check_rate_limit(body)
+    if has_rate_limit_error:
+        logger.warning("Rate limit detected in stream. Disabling key.")
+        await key_manager.disable_key(api_key, reset_time_ms)
 
 async def proxy_with_httpx(
     request: Request,
@@ -298,19 +301,24 @@ async def proxy_with_httpx(
 
 
             openrouter_resp = await client.request(**req_kwargs)
+            headers = dict(openrouter_resp.headers)
+            # Content has already been decoded
+            headers.pop("content-encoding", None)
+            headers.pop("Content-Encoding", None)
+
             if not is_stream:
                 body = await openrouter_resp.aread()
                 await _check_httpx_err(body, api_key)
                 return Response(
                     content=body,
                     status_code=openrouter_resp.status_code,
-                    headers=dict(openrouter_resp.headers),
+                    headers=headers,
                 )
             if not api_key and not is_completion:
                 return StreamingResponse(
                     openrouter_resp.aiter_bytes(),
                     status_code=openrouter_resp.status_code,
-                    headers=dict(openrouter_resp.headers),
+                    headers=headers,
                 )
 
             async def stream_completion():
@@ -334,7 +342,7 @@ async def proxy_with_httpx(
             return StreamingResponse(
                 stream_completion(),
                 status_code=openrouter_resp.status_code,
-                headers=dict(openrouter_resp.headers),
+                headers=headers,
             )
         except httpx.ConnectError as e:
             logger.error("Connection error to OpenRouter: %s", str(e))
