@@ -110,15 +110,11 @@ async def proxy_endpoint(
             if is_stream:
                 logger.info("Detected streaming request")
 
-            # Check for model variant
+            # Check for model
             if is_openai and request.method == "POST":
                 model = request_body.get("model", "")
-                if (
-                    ":" in model
-                ):  # This indicates a model variant like :free, :beta, etc.
-                    base_model, variant = model.split(":", 1)
-                    model_variant = f"{base_model} with {variant} tier"
-                    logger.info("Using model variant: %s", model_variant)
+                if model:
+                    logger.info("Using model: %s", model)
 
     except Exception as e:
         logger.debug("Could not parse request body: %s", str(e))
@@ -275,7 +271,7 @@ async def _check_httpx_err(body: str | bytes, api_key: str | None):
 
 def _remove_paid_models(body: bytes) -> bytes:
     # {'prompt': '0', 'completion': '0', 'request': '0', 'image': '0', 'web_search': '0', 'internal_reasoning': '0'}
-    prices =['prompt', 'completion', 'request', 'image', 'web_search', 'internal_reasoning']
+    prices = ['prompt', 'completion', 'request', 'image', 'web_search', 'internal_reasoning']
     try:
         data = json.loads(body)
     except (json.JSONDecodeError, ValueError) as e:
