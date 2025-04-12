@@ -8,7 +8,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from config import config, logger
-from routes import router
+from routes import router, lifespan
 from utils import get_local_ip
 
 # Create FastAPI app
@@ -16,6 +16,7 @@ app = FastAPI(
     title="OpenRouter API Proxy",
     description="Proxies requests to OpenRouter API and rotates API keys to bypass rate limits",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Include routes
@@ -39,4 +40,4 @@ if __name__ == "__main__":
     log_config["loggers"]["uvicorn.access"]["level"] = http_log_level
     logger.info("HTTP access log level set to %s", http_log_level)
 
-    uvicorn.run(app, host=host, port=port, log_config=log_config)
+    uvicorn.run("main:app", host=host, port=port, log_config=log_config, reload=True)

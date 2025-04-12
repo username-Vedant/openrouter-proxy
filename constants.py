@@ -15,13 +15,10 @@ RATE_LIMIT_ERROR_CODE = 429
 # Public endpoints that don't require authentication
 PUBLIC_ENDPOINTS = ["/api/v1/models"]
 
-# Use httpx for proxy
-HTTPX_ENDPOINTS = ["/api/v1/generation", "/api/v1/models"]
-
 MODELS_ENDPOINTS = ["/api/v1/models"]
 
 # Use openai for proxy
-OPENAI_ENDPOINTS = ["/api/v1/completions", "/api/v1/chat/completions"]
+OPENAI_ENDPOINTS = ["/api/v1/chat/completions"]
 
 # Read line by line
 COMPLETION_ENDPOINTS = ["/api/v1/completions", "/api/v1/chat/completions"]
