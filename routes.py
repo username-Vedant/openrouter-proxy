@@ -197,7 +197,7 @@ async def handle_completions(
                     logger.debug("Error body: %s", err.body)
                     # Check if this is a rate limit error
                     if api_key:
-                        has_rate_limit_error_, reset_time_ms_ = check_rate_limit_chat(err)
+                        has_rate_limit_error_, reset_time_ms_ = await check_rate_limit_chat(err)
                         if has_rate_limit_error_:
                             logger.warning("Rate limit detected in stream. Disabling key.")
                             await key_manager.disable_key(
@@ -240,7 +240,7 @@ async def handle_completions(
             logger.debug("Error body: %s", e.body)
             # Check if this is a rate limit error
             if api_key:
-                has_rate_limit_error, reset_time_ms = check_rate_limit_chat(e)
+                has_rate_limit_error, reset_time_ms = await check_rate_limit_chat(e)
                 if has_rate_limit_error:
                     logger.warning("Rate limit detected in stream. Disabling key.")
                     await key_manager.disable_key(api_key, reset_time_ms)
@@ -264,7 +264,7 @@ async def _check_httpx_err(body: str | bytes, api_key: str | None):
     if (isinstance(body, str) and body.startswith("data: ") or (
             isinstance(body, bytes) and body.startswith(b"data: "))):
         body = body[6:]
-    has_rate_limit_error, reset_time_ms = check_rate_limit(body)
+    has_rate_limit_error, reset_time_ms = await check_rate_limit(body)
     if has_rate_limit_error:
         logger.warning("Rate limit detected in stream. Disabling key.")
         await key_manager.disable_key(api_key, reset_time_ms)

@@ -3,9 +3,9 @@
 Utility functions for OpenRouter API Proxy.
 """
 
-import socket
-import time
+import asyncio
 import json
+import socket
 from typing import Optional, Tuple
 
 from fastapi import Header, HTTPException
@@ -57,7 +57,7 @@ async def verify_access_key(
     return True
 
 
-def is_google_error(data: str) -> bool:
+async def is_google_error(data: str) -> bool:
     # data = {
     #     'error': {
     #         'code': 429,
@@ -84,10 +84,25 @@ def is_google_error(data: str) -> bool:
         except Exception as e:
             logger.info("Json.loads error %s", e)
         else:
-            return data["error"].get("status", "") == "RESOURCE_EXHAUSTED"
+            if data["error"].get("status", "") == "RESOURCE_EXHAUSTED":
+                retry_delay_s = config["openrouter"].get("google_rate_delay", 0)
+                if retry_delay_s:
+                    # I think this is global rate limit, so 'retryDelay' is useless
+                    # try:
+                    #     retry_info = next(
+                    #         (item for item in data['error']['details']
+                    #          if item.get('@type') == 'type.googleapis.com/google.rpc.RetryInfo'), {}
+                    #     )
+                    #     retry_delay = retry_info['retryDelay']
+                    #     retry_delay_s = int(''.join(c for c in retry_delay if c.isdigit()))
+                    # except (TypeError, KeyError, ValueError) as _:
+                    #     retry_delay_s = GOOGLE_DELAY
+                    logger.info("Google returned RESOURCE_EXHAUSTED, wait %s sec", retry_delay_s)
+                    await asyncio.sleep(retry_delay_s)
+                return True
     return False
 
-def check_rate_limit_chat(err: APIError) -> Tuple[bool, Optional[int]]:
+async def check_rate_limit_chat(err: APIError) -> Tuple[bool, Optional[int]]:
     """
     Check for rate limit error.
 
@@ -106,13 +121,13 @@ def check_rate_limit_chat(err: APIError) -> Tuple[bool, Optional[int]]:
             try:
                 reset_time_ms = int(err.body["metadata"]["headers"]["X-RateLimit-Reset"])
             except (TypeError, KeyError):
-                if is_google_error(err.body.get("metadata", {}).get("raw", "")):
+                if await is_google_error(err.body.get("metadata", {}).get("raw", "")):
                     has_rate_limit_error = False
 
     return has_rate_limit_error, reset_time_ms
 
 
-def check_rate_limit(data: str or bytes) -> Tuple[bool, Optional[int]]:
+async def check_rate_limit(data: str or bytes) -> Tuple[bool, Optional[int]]:
     """
     Check for rate limit error.
 
@@ -134,7 +149,8 @@ def check_rate_limit(data: str or bytes) -> Tuple[bool, Optional[int]]:
             try:
                 x_rate_limit = int(err["error"]["metadata"]["headers"]["X-RateLimit-Reset"])
             except (TypeError, KeyError):
-                if code == RATE_LIMIT_ERROR_CODE and is_google_error(err["error"].get("metadata", {}).get("raw", "")):
+                if (code == RATE_LIMIT_ERROR_CODE and
+                        await is_google_error(err["error"].get("metadata", {}).get("raw", ""))):
                     return False, None
                 x_rate_limit = 0
 
