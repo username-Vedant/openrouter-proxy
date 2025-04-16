@@ -40,4 +40,4 @@ if __name__ == "__main__":
     log_config["loggers"]["uvicorn.access"]["level"] = http_log_level
     logger.info("HTTP access log level set to %s", http_log_level)
 
-    uvicorn.run(app, host=host, port=port, log_config=log_config)
+    uvicorn.run(app, host=host, port=port, log_config=log_config, timeout_graceful_shutdown=30)

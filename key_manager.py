@@ -20,6 +20,7 @@ def _mask_key(key: str) -> str:
         return "****"
     return key[:4] + "****" + key[-4:]
 
+
 class KeyManager:
     """Manages OpenRouter API keys, including rotation and rate limit handling."""
     def __init__(self, keys: List[str], cooldown_seconds: int):

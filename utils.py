@@ -28,6 +28,7 @@ def get_local_ip() -> str:
     except Exception:
         return "localhost"
 
+
 async def verify_access_key(
     authorization: Optional[str] = Header(None),
 ) -> bool:
@@ -101,6 +102,7 @@ async def is_google_error(data: str) -> bool:
                     await asyncio.sleep(retry_delay_s)
                 return True
     return False
+
 
 async def check_rate_limit_chat(err: APIError) -> Tuple[bool, Optional[int]]:
     """

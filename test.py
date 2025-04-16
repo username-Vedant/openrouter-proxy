@@ -18,6 +18,7 @@ def load_config():
     with open("config.yml", encoding="utf-8") as file:
         return yaml.safe_load(file)
 
+
 # Get configuration
 config = load_config()
 server_config = config["server"]
@@ -37,6 +38,8 @@ if os.environ.get("ACCESS_KEY"):
 
 MODEL =  "deepseek/deepseek-r1:free"
 # MODEL = "google/gemini-2.0-pro-exp-02-05:free"
+
+
 async def test_openrouter_streaming():
     """
     Test the OpenRouter proxy with streaming mode.

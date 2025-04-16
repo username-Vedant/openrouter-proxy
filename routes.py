@@ -64,6 +64,47 @@ async def get_openai_client(api_key: str, request: Request) -> AsyncOpenAI:
     return AsyncOpenAI(**client_params)
 
 
+async def check_httpx_err(body: str | bytes, api_key: str | None):
+    # too big for error
+    if len(body) > 4000 or not api_key:
+        return
+    if (isinstance(body, str) and body.startswith("data: ") or (
+            isinstance(body, bytes) and body.startswith(b"data: "))):
+        body = body[6:]
+    has_rate_limit_error, reset_time_ms = await check_rate_limit(body)
+    if has_rate_limit_error:
+        logger.warning("Rate limit detected in stream. Disabling key.")
+        await key_manager.disable_key(api_key, reset_time_ms)
+
+
+def remove_paid_models(body: bytes) -> bytes:
+    # {'prompt': '0', 'completion': '0', 'request': '0', 'image': '0', 'web_search': '0', 'internal_reasoning': '0'}
+    prices = ['prompt', 'completion', 'request', 'image', 'web_search', 'internal_reasoning']
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning("Error models deserialize: %s", str(e))
+    else:
+        if isinstance(data.get("data"), list):
+            clear_data = []
+            for model in data["data"]:
+                if all(model.get("pricing", {}).get(k, "1") == "0" for k in prices):
+                    clear_data.append(model)
+            if clear_data:
+                data["data"] = clear_data
+                body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    return body
+
+
+def prepare_forward_headers(request: Request) -> dict:
+    return {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower()
+           not in ["host", "content-length", "connection", "authorization"]
+    }
+
+
 @router.api_route(
     "/api/v1{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
@@ -89,36 +130,35 @@ async def proxy_endpoint(
         full_url, is_public, is_completion, is_openai
     )
 
-    # Parse request body (if any)
-    request_body = None
-    is_stream = False
     # Get API key to use
-    if not is_public:
+    if is_public:
+        # For public endpoints, we don't need an API key
+        api_key = ""
+    else:
         api_key = await key_manager.get_next_key()
         if not api_key:
             raise HTTPException(status_code=503, detail="No available API keys")
-    else:
-        # For public endpoints, we don't need an API key
-        api_key = ""
+
+    # Parse request body (if any)
+    request_body = None
+    is_stream = False
     try:
         body_bytes = await request.body()
         if body_bytes:
             request_body = json.loads(body_bytes)
             is_stream = request_body.get("stream", False)
 
-            # Log if this is a streaming request
-            if is_stream:
-                logger.info("Detected streaming request")
-
             # Check for model
             if is_openai and request.method == "POST":
                 model = request_body.get("model", "")
                 if model:
                     logger.info("Using model: %s", model)
-
     except Exception as e:
         logger.debug("Could not parse request body: %s", str(e))
         request_body = None
+
+    if is_stream:
+        logger.info("Detected streaming request")
 
     try:
         # For OpenAI-compatible endpoints, use the OpenAI library
@@ -148,12 +188,7 @@ async def handle_completions(
     """Handle chat completions using the OpenAI client."""
     try:
         # Extract headers to forward
-        forward_headers = {
-            k: v
-            for k, v in request.headers.items()
-            if k.lower()
-               not in ["host", "content-length", "connection", "authorization"]
-        }
+        forward_headers = prepare_forward_headers(request)
 
         # Create a copy of the request body to modify
         completion_args = request_body.copy()
@@ -172,15 +207,13 @@ async def handle_completions(
         # Create an OpenAI client
         client = await get_openai_client(api_key, request)
 
-        # Create a properly formatted request to the OpenAI API
+        logger.info(f"Making {'streaming' if is_stream else 'regular'} chat completion request")
+        response = await client.chat.completions.create(
+            **completion_args, extra_headers=forward_headers, extra_body=extra_body, stream=is_stream
+        )
+
+        # Handle streaming response
         if is_stream:
-            logger.info("Making streaming chat completion request")
-
-            response = await client.chat.completions.create(
-                **completion_args, extra_headers=forward_headers, extra_body=extra_body, stream=True
-            )
-
-            # Handle streaming response
             async def stream_response() -> AsyncGenerator[bytes, None]:
                 try:
                     async for chunk in response:
@@ -217,13 +250,8 @@ async def handle_completions(
                     "X-Accel-Buffering": "no",
                 },
             )
+
         # Non-streaming request
-        logger.info("Making regular chat completion request")
-
-        response = await client.chat.completions.create(
-            **completion_args, extra_headers=forward_headers, extra_body=extra_body
-        )
-
         result = response.model_dump()
         if 'error' in result:
             raise APIError(result['error'].get("message", "Error"), None, body=result['error'])
@@ -257,36 +285,6 @@ async def handle_completions(
         raise HTTPException(code, detail) from e
 
 
-async def _check_httpx_err(body: str | bytes, api_key: str | None):
-    # too big for error
-    if len(body) > 4000 or not api_key:
-        return
-    if (isinstance(body, str) and body.startswith("data: ") or (
-            isinstance(body, bytes) and body.startswith(b"data: "))):
-        body = body[6:]
-    has_rate_limit_error, reset_time_ms = await check_rate_limit(body)
-    if has_rate_limit_error:
-        logger.warning("Rate limit detected in stream. Disabling key.")
-        await key_manager.disable_key(api_key, reset_time_ms)
-
-def _remove_paid_models(body: bytes) -> bytes:
-    # {'prompt': '0', 'completion': '0', 'request': '0', 'image': '0', 'web_search': '0', 'internal_reasoning': '0'}
-    prices = ['prompt', 'completion', 'request', 'image', 'web_search', 'internal_reasoning']
-    try:
-        data = json.loads(body)
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.warning("Error models deserialize: %s", str(e))
-    else:
-        if isinstance(data.get("data"), list):
-            clear_data = []
-            for model in data["data"]:
-                if all(model.get("pricing", {}).get(k, "1") == "0" for k in prices):
-                    clear_data.append(model)
-            if clear_data:
-                data["data"] = clear_data
-                body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-    return body
-
 async def proxy_with_httpx(
     request: Request,
     path: str,
@@ -297,12 +295,7 @@ async def proxy_with_httpx(
     """Fall back to httpx for endpoints not supported by the OpenAI SDK."""
     free_only = (any(f"/api/v1{path}" == ep for ep in MODELS_ENDPOINTS) and
                  config["openrouter"].get("free_only", False))
-    headers = {
-        k: v
-        for k, v in request.headers.items()
-        if k.lower()
-           not in ["host", "content-length", "connection", "authorization"]
-    }
+    headers = prepare_forward_headers(request)
     req_kwargs = {
         "method": request.method,
         "url": f"{OPENROUTER_BASE_URL}{path}",
@@ -326,9 +319,9 @@ async def proxy_with_httpx(
 
         if not is_stream:
             body = await openrouter_resp.aread()
-            await _check_httpx_err(body, api_key)
+            await check_httpx_err(body, api_key)
             if free_only:
-                body = _remove_paid_models(body)
+                body = remove_paid_models(body)
             return Response(
                 content=body,
                 status_code=openrouter_resp.status_code,
@@ -357,7 +350,8 @@ async def proxy_with_httpx(
                         yield f"{line}\n\n".encode("utf-8")
             except Exception as err:
                 logger.error("stream_completion error: %s", err)
-            await _check_httpx_err(data, api_key)
+            await check_httpx_err(data, api_key)
+
 
         return StreamingResponse(
             stream_completion(),

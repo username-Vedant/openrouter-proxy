@@ -26,6 +26,7 @@ def load_config() -> Dict[str, Any]:
         print(f"Error parsing configuration file: {e}")
         sys.exit(1)
 
+
 def setup_logging(config_: Dict[str, Any]) -> logging.Logger:
     """Configure logging based on configuration."""
     log_level_str = config_.get("server", {}).get("log_level", "INFO")
@@ -40,6 +41,7 @@ def setup_logging(config_: Dict[str, Any]) -> logging.Logger:
     logger_.info("Logging level set to %s", log_level_str)
 
     return logger_
+
 
 # Load configuration
 config = load_config()
