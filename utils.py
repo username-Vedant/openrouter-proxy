@@ -86,8 +86,7 @@ async def is_google_error(data: str) -> bool:
             logger.info("Json.loads error %s", e)
         else:
             if data["error"].get("status", "") == "RESOURCE_EXHAUSTED":
-                retry_delay_s = config["openrouter"].get("google_rate_delay", 0)
-                if retry_delay_s:
+                if config["openrouter"]["google_rate_delay"]:
                     # I think this is global rate limit, so 'retryDelay' is useless
                     # try:
                     #     retry_info = next(
@@ -98,8 +97,9 @@ async def is_google_error(data: str) -> bool:
                     #     retry_delay_s = int(''.join(c for c in retry_delay if c.isdigit()))
                     # except (TypeError, KeyError, ValueError) as _:
                     #     retry_delay_s = GOOGLE_DELAY
-                    logger.info("Google returned RESOURCE_EXHAUSTED, wait %s sec", retry_delay_s)
-                    await asyncio.sleep(retry_delay_s)
+                    logger.info("Google returned RESOURCE_EXHAUSTED, wait %s sec",
+                                config["openrouter"]["google_rate_delay"])
+                    await asyncio.sleep(config["openrouter"]["google_rate_delay"])
                 return True
     return False
 

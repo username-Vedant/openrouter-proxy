@@ -14,11 +14,7 @@ from openai import AsyncOpenAI, APIError
 
 from config import config, logger
 from constants import (
-    OPENROUTER_BASE_URL,
-    PUBLIC_ENDPOINTS,
-    OPENAI_ENDPOINTS,
-    COMPLETION_ENDPOINTS,
-    MODELS_ENDPOINTS,
+    OPENAI_ENDPOINTS, COMPLETION_ENDPOINTS, MODELS_ENDPOINTS
 )
 from key_manager import KeyManager
 from utils import (
@@ -41,7 +37,7 @@ key_manager = KeyManager(
 async def lifespan(app_: FastAPI):
     client_kwargs = {"timeout": 60.0}  # Increase default timeout
     # Add proxy configuration if enabled
-    if config.get("requestProxy", {}).get("enabled", False):
+    if config["requestProxy"]["enabled"]:
         proxy_url = config["requestProxy"]["url"]
         client_kwargs["proxy"] = proxy_url
         logger.info("Using proxy for httpx client: %s", proxy_url)
@@ -58,7 +54,7 @@ async def get_openai_client(api_key: str, request: Request) -> AsyncOpenAI:
     """Create an OpenAI client with the specified API key."""
     client_params = {
         "api_key": api_key,
-        "base_url": OPENROUTER_BASE_URL,
+        "base_url": config["openrouter"]["base_url"],
         "http_client": await get_async_client(request)
     }
     return AsyncOpenAI(**client_params)
@@ -115,7 +111,7 @@ async def proxy_endpoint(
     """
     Main proxy endpoint for handling all requests to OpenRouter API.
     """
-    is_public = any(f"/api/v1{path}".startswith(ep) for ep in PUBLIC_ENDPOINTS)
+    is_public = any(f"/api/v1{path}".startswith(ep) for ep in config["openrouter"]["public_endpoints"])
     is_completion = any(f"/api/v1{path}".startswith(ep) for ep in COMPLETION_ENDPOINTS)
     is_openai = any(f"/api/v1{path}".startswith(ep) for ep in OPENAI_ENDPOINTS)
 
@@ -294,11 +290,11 @@ async def proxy_with_httpx(
 ) -> Response:
     """Fall back to httpx for endpoints not supported by the OpenAI SDK."""
     free_only = (any(f"/api/v1{path}" == ep for ep in MODELS_ENDPOINTS) and
-                 config["openrouter"].get("free_only", False))
+                 config["openrouter"]["free_only"])
     headers = prepare_forward_headers(request)
     req_kwargs = {
         "method": request.method,
-        "url": f"{OPENROUTER_BASE_URL}{path}",
+        "url": f"{config['openrouter']['base_url']}{path}",
         "headers": headers,
         "content": await request.body(),
     }

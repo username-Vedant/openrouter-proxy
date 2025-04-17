@@ -11,6 +11,7 @@ by rotating through multiple API keys in a round-robin fashion.
 - Streams responses chunk by chunk for efficient data transfer
 - Simple authentication for accessing the proxy
 - Uses OpenAI SDK for compatible endpoints for reliable handling
+- Theoretically compatible with any OpenAI-compatible API by changing the `base_url` and `public_endpoints` in `config.yml`
 
 ## Setup
 
@@ -46,6 +47,13 @@ openrouter:
     - "sk-or-v1-your-first-api-key"
     - "sk-or-v1-your-second-api-key"
     - "sk-or-v1-your-third-api-key"
+
+  # OpenRouter API base URL
+  base_url: "https://openrouter.ai/api/v1"
+
+  # Public endpoints that don't require authentication
+  public_endpoints:
+    - "/api/v1/models"
 
   # Time in seconds to temporarily disable a key when rate limit is reached by default
   rate_limit_cooldown: 14400  # 4 hours
