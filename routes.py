@@ -69,7 +69,6 @@ async def check_httpx_err(body: str | bytes, api_key: str | None):
         body = body[6:]
     has_rate_limit_error, reset_time_ms = await check_rate_limit(body)
     if has_rate_limit_error:
-        logger.warning("Rate limit detected in stream. Disabling key.")
         await key_manager.disable_key(api_key, reset_time_ms)
 
 
@@ -167,12 +166,11 @@ async def proxy_endpoint(
             return await proxy_with_httpx(
                 request, path, api_key, is_stream, is_completion
             )
-
-    except (Exception, HTTPException) as e:
-        logger.error("Error proxying request: %s", str(e))
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=500, detail=f"Proxy error: {str(e)}") from e
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error("Internal error: %s", str(e))
+        raise HTTPException(status_code=500, detail="Internal Proxy Error") from e
 
 
 async def handle_completions(
@@ -228,7 +226,6 @@ async def handle_completions(
                     if api_key:
                         has_rate_limit_error_, reset_time_ms_ = await check_rate_limit_chat(err)
                         if has_rate_limit_error_:
-                            logger.warning("Rate limit detected in stream. Disabling key.")
                             await key_manager.disable_key(
                                 api_key, reset_time_ms_
                             )
@@ -256,27 +253,26 @@ async def handle_completions(
         return Response(
             content=json.dumps(result), media_type="application/json"
         )
-    except (APIError, Exception) as e:
+    except APIError as e:
         logger.error("Error in chat completions: %s", str(e))
-        code = 500
-        detail = f"Error processing chat completion: {str(e)}"
-        if isinstance(e, APIError):
-            logger.debug("Error body: %s", e.body)
-            # Check if this is a rate limit error
-            if api_key:
-                has_rate_limit_error, reset_time_ms = await check_rate_limit_chat(e)
-                if has_rate_limit_error:
-                    logger.warning("Rate limit detected in stream. Disabling key.")
-                    await key_manager.disable_key(api_key, reset_time_ms)
+        logger.debug("Error body: %s", e.body)
+        # Check if this is a rate limit error
+        if api_key:
+            has_rate_limit_error, reset_time_ms = await check_rate_limit_chat(e)
+            if has_rate_limit_error:
+                await key_manager.disable_key(api_key, reset_time_ms)
 
-                    # Try again with a new key
-                    new_api_key = await key_manager.get_next_key()
-                    if new_api_key:
-                        return await handle_completions(
-                            request, request_body, new_api_key, is_stream
-                        )
-            code = e.code or code
-            detail = e.body or detail
+                # Try again with a new key
+                new_api_key = await key_manager.get_next_key()
+                if new_api_key:
+                    return await handle_completions(
+                        request, request_body, new_api_key, is_stream
+                    )
+        code = e.code or 500
+        if e.code is None and isinstance(e.body, list) and isinstance(e.body[0], dict):
+            code = e.body[0].get("error", {}).get("code", code)
+        detail = e.body or f"Error processing chat completion: {str(e)}"
+
         # Raise the exception
         raise HTTPException(code, detail) from e
 
@@ -360,9 +356,9 @@ async def proxy_with_httpx(
     except httpx.TimeoutException as e:
         logger.error("Timeout connecting to OpenRouter: %s", str(e))
         raise HTTPException(504, "OpenRouter API request timed out") from e
-    except Exception as e:
+    except HTTPException as e:
         logger.error("Error proxying request with httpx: %s", str(e))
-        raise HTTPException(500, f"Proxy error: {str(e)}") from e
+        raise e
 
 
 @router.get("/health")
