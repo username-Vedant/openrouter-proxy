@@ -61,12 +61,9 @@ async def get_openai_client(api_key: str, request: Request) -> AsyncOpenAI:
 
 
 async def check_httpx_err(body: str | bytes, api_key: str | None):
-    # too big for error
-    if len(body) > 4000 or not api_key:
+    # too big or small for error
+    if 10 > len(body) > 4000 or not api_key:
         return
-    if (isinstance(body, str) and body.startswith("data: ") or (
-            isinstance(body, bytes) and body.startswith(b"data: "))):
-        body = body[6:]
     has_rate_limit_error, reset_time_ms = await check_rate_limit(body)
     if has_rate_limit_error:
         await key_manager.disable_key(api_key, reset_time_ms)
@@ -287,30 +284,28 @@ async def proxy_with_httpx(
     """Fall back to httpx for endpoints not supported by the OpenAI SDK."""
     free_only = (any(f"/api/v1{path}" == ep for ep in MODELS_ENDPOINTS) and
                  config["openrouter"]["free_only"])
-    headers = prepare_forward_headers(request)
     req_kwargs = {
         "method": request.method,
         "url": f"{config['openrouter']['base_url']}{path}",
-        "headers": headers,
+        "headers": prepare_forward_headers(request),
         "content": await request.body(),
+        "params": request.query_params,
     }
-    # Add query parameters if they exist
-    if request.query_params:
-        req_kwargs["url"] = f"{req_kwargs['url']}?{request.url.query}"
-
     if api_key:
         req_kwargs["headers"]["Authorization"] = f"Bearer {api_key}"
 
     client = await get_async_client(request)
     try:
-        openrouter_resp = await client.request(**req_kwargs)
+        openrouter_req = client.build_request(**req_kwargs)
+        openrouter_resp = await client.send(openrouter_req, stream=is_stream)
+
         headers = dict(openrouter_resp.headers)
         # Content has already been decoded
         headers.pop("content-encoding", None)
         headers.pop("Content-Encoding", None)
 
         if not is_stream:
-            body = await openrouter_resp.aread()
+            body = openrouter_resp.content
             await check_httpx_err(body, api_key)
             if free_only:
                 body = remove_paid_models(body)
@@ -319,30 +314,26 @@ async def proxy_with_httpx(
                 status_code=openrouter_resp.status_code,
                 headers=headers,
             )
-        if not api_key and not is_completion:
-            return StreamingResponse(
-                openrouter_resp.aiter_bytes(),
-                status_code=openrouter_resp.status_code,
-                headers=headers,
-            )
 
         async def stream_completion():
-            data = ''
+            if not (api_key or is_completion):
+                try:
+                    async for chunk in openrouter_resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await openrouter_resp.aclose()
+                return
+            last_json = ""
             try:
                 async for line in openrouter_resp.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]  # Get data without 'data: ' prefix
-                        if data == "[DONE]":
-                            yield "data: [DONE]\n\n".encode("utf-8")
-                        else:
-                            # Forward the original data without reformatting
-                            data = line
-                            yield f"{line}\n\n".encode("utf-8")
-                    elif line:
-                        yield f"{line}\n\n".encode("utf-8")
+                    if line.startswith("data: {"): # get json only
+                        last_json = line[6:]
+                    yield f"{line}\n\n".encode("utf-8")
             except Exception as err:
                 logger.error("stream_completion error: %s", err)
-            await check_httpx_err(data, api_key)
+            finally:
+                await openrouter_resp.aclose()
+            await check_httpx_err(last_json, api_key)
 
 
         return StreamingResponse(
