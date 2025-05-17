@@ -5,23 +5,16 @@ API routes for OpenRouter API Proxy.
 
 import json
 from contextlib import asynccontextmanager
-from typing import Optional, Dict, Any, AsyncGenerator
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Request, Header, HTTPException, FastAPI
 from fastapi.responses import StreamingResponse, Response
-from openai import AsyncOpenAI, APIError
 
 from config import config, logger
-from constants import (
-    OPENAI_ENDPOINTS, COMPLETION_ENDPOINTS, MODELS_ENDPOINTS
-)
+from constants import MODELS_ENDPOINTS
 from key_manager import KeyManager
-from utils import (
-    verify_access_key,
-    check_rate_limit_chat,
-    check_rate_limit
-)
+from utils import verify_access_key, check_rate_limit
 
 # Create router
 router = APIRouter()
@@ -35,7 +28,7 @@ key_manager = KeyManager(
 
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
-    client_kwargs = {"timeout": 60.0}  # Increase default timeout
+    client_kwargs = {"timeout": 600.0}  # Increase default timeout
     # Add proxy configuration if enabled
     if config["requestProxy"]["enabled"]:
         proxy_url = config["requestProxy"]["url"]
@@ -50,17 +43,7 @@ async def get_async_client(request: Request) -> httpx.AsyncClient:
     return request.app.state.http_client
 
 
-async def get_openai_client(api_key: str, request: Request) -> AsyncOpenAI:
-    """Create an OpenAI client with the specified API key."""
-    client_params = {
-        "api_key": api_key,
-        "base_url": config["openrouter"]["base_url"],
-        "http_client": await get_async_client(request)
-    }
-    return AsyncOpenAI(**client_params)
-
-
-async def check_httpx_err(body: str | bytes, api_key: str | None):
+async def check_httpx_err(body: str | bytes, api_key: Optional[str]):
     # too big or small for error
     if 10 > len(body) > 4000 or not api_key:
         return
@@ -97,19 +80,12 @@ def prepare_forward_headers(request: Request) -> dict:
     }
 
 
-@router.api_route(
-    "/api/v1{path:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
-)
+@router.api_route("/api/v1{path:path}", methods=["GET", "POST"])
 async def proxy_endpoint(
     request: Request, path: str, authorization: Optional[str] = Header(None)
 ):
-    """
-    Main proxy endpoint for handling all requests to OpenRouter API.
-    """
+    """Main proxy endpoint for handling all requests to OpenRouter API."""
     is_public = any(f"/api/v1{path}".startswith(ep) for ep in config["openrouter"]["public_endpoints"])
-    is_completion = any(f"/api/v1{path}".startswith(ep) for ep in COMPLETION_ENDPOINTS)
-    is_openai = any(f"/api/v1{path}".startswith(ep) for ep in OPENAI_ENDPOINTS)
 
     # Verify authorization for non-public endpoints
     if not is_public:
@@ -117,161 +93,24 @@ async def proxy_endpoint(
 
     # Log the full request URL including query parameters
     full_url = str(request.url).replace(str(request.base_url), "/")
-    logger.info(
-        "Proxying request to %s (Public: %s, Completion: %s, OpenAI: %s)",
-        full_url, is_public, is_completion, is_openai
-    )
+    logger.info("Proxying request to %s (Public: %s)", full_url, is_public)
 
     # Get API key to use
-    if is_public:
-        # For public endpoints, we don't need an API key
-        api_key = ""
-    else:
-        api_key = await key_manager.get_next_key()
-        if not api_key:
-            raise HTTPException(status_code=503, detail="No available API keys")
+    api_key = "" if is_public else await key_manager.get_next_key()
 
-    # Parse request body (if any)
-    request_body = None
     is_stream = False
-    try:
-        body_bytes = await request.body()
-        if body_bytes:
-            request_body = json.loads(body_bytes)
-            is_stream = request_body.get("stream", False)
-
-            # Check for model
-            if is_openai and request.method == "POST":
-                model = request_body.get("model", "")
-                if model:
+    if request.method == "POST":
+        try:
+            if body_bytes := await request.body():
+                request_body = json.loads(body_bytes)
+                if is_stream := request_body.get("stream", False):
+                    logger.info("Detected streaming request")
+                if model := request_body.get("model"):
                     logger.info("Using model: %s", model)
-    except Exception as e:
-        logger.debug("Could not parse request body: %s", str(e))
-        request_body = None
+        except Exception as e:
+            logger.debug("Could not parse request body: %s", str(e))
 
-    if is_stream:
-        logger.info("Detected streaming request")
-
-    try:
-        # For OpenAI-compatible endpoints, use the OpenAI library
-        if is_openai:
-            return await handle_completions(
-                request, request_body, api_key, is_stream
-            )
-        else:
-            # Fallback for other endpoints
-            return await proxy_with_httpx(
-                request, path, api_key, is_stream, is_completion
-            )
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error("Internal error: %s", str(e))
-        raise HTTPException(status_code=500, detail="Internal Proxy Error") from e
-
-
-async def handle_completions(
-    request: Request,
-    request_body: Dict[str, Any],
-    api_key: str,
-    is_stream: bool = False,
-) -> Response:
-    """Handle chat completions using the OpenAI client."""
-    try:
-        # Extract headers to forward
-        forward_headers = prepare_forward_headers(request)
-
-        # Create a copy of the request body to modify
-        completion_args = request_body.copy()
-
-        # Ensure we don't pass 'stream' twice
-        if "stream" in completion_args:
-            del completion_args["stream"]
-
-        # Move non-standard parameters that OpenAI SDK doesn't support directly to extra_body
-        extra_body = {}
-        openai_unsupported_params = ["include_reasoning", "transforms", "route", "provider"]
-        for param in openai_unsupported_params:
-            if param in completion_args:
-                extra_body[param] = completion_args.pop(param)
-
-        # Create an OpenAI client
-        client = await get_openai_client(api_key, request)
-
-        logger.info(f"Making {'streaming' if is_stream else 'regular'} chat completion request")
-        response = await client.chat.completions.create(
-            **completion_args, extra_headers=forward_headers, extra_body=extra_body, stream=is_stream
-        )
-
-        # Handle streaming response
-        if is_stream:
-            async def stream_response() -> AsyncGenerator[bytes, None]:
-                try:
-                    async for chunk in response:
-                        # Convert chunk to the expected SSE format
-                        if chunk.choices:
-                            yield f"data: {json.dumps(chunk.model_dump())}\n\n".encode(
-                                "utf-8"
-                            )
-
-                    # Send the end marker
-                    yield b"data: [DONE]\n\n"
-                except APIError as err:
-                    logger.error("Error in streaming response %s: %s", err.code, err)
-                    logger.debug("Error body: %s", err.body)
-                    # Check if this is a rate limit error
-                    if api_key:
-                        has_rate_limit_error_, reset_time_ms_ = await check_rate_limit_chat(err)
-                        if has_rate_limit_error_:
-                            await key_manager.disable_key(
-                                api_key, reset_time_ms_
-                            )
-                        elif isinstance(err.body, dict):
-                            yield json.dumps(err.body).encode("utf-8")
-
-
-            # Return a streaming response
-            return StreamingResponse(
-                stream_response(),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
-            )
-
-        # Non-streaming request
-        result = response.model_dump()
-        if 'error' in result:
-            raise APIError(result['error'].get("message", "Error"), None, body=result['error'])
-
-        # Return the response as JSON
-        return Response(
-            content=json.dumps(result), media_type="application/json"
-        )
-    except APIError as e:
-        logger.error("Error in chat completions: %s", str(e))
-        logger.debug("Error body: %s", e.body)
-        # Check if this is a rate limit error
-        if api_key:
-            has_rate_limit_error, reset_time_ms = await check_rate_limit_chat(e)
-            if has_rate_limit_error:
-                await key_manager.disable_key(api_key, reset_time_ms)
-
-                # Try again with a new key
-                new_api_key = await key_manager.get_next_key()
-                if new_api_key:
-                    return await handle_completions(
-                        request, request_body, new_api_key, is_stream
-                    )
-        code = e.code or 500
-        if e.code is None and isinstance(e.body, list) and isinstance(e.body[0], dict):
-            code = e.body[0].get("error", {}).get("code", code)
-        detail = e.body or f"Error processing chat completion: {str(e)}"
-
-        # Raise the exception
-        raise HTTPException(code, detail) from e
+    return await proxy_with_httpx(request, path, api_key, is_stream)
 
 
 async def proxy_with_httpx(
@@ -279,9 +118,8 @@ async def proxy_with_httpx(
     path: str,
     api_key: str,
     is_stream: bool,
-    is_completion: bool,
 ) -> Response:
-    """Fall back to httpx for endpoints not supported by the OpenAI SDK."""
+    """Core logic to proxy requests."""
     free_only = (any(f"/api/v1{path}" == ep for ep in MODELS_ENDPOINTS) and
                  config["openrouter"]["free_only"])
     req_kwargs = {
@@ -299,6 +137,15 @@ async def proxy_with_httpx(
         openrouter_req = client.build_request(**req_kwargs)
         openrouter_resp = await client.send(openrouter_req, stream=is_stream)
 
+        if openrouter_resp.status_code >= 400:
+            if is_stream:
+                try:
+                    await openrouter_resp.aread()
+                except Exception as e:
+                    await openrouter_resp.aclose()
+                    raise e
+            openrouter_resp.raise_for_status()
+
         headers = dict(openrouter_resp.headers)
         # Content has already been decoded
         headers.pop("content-encoding", None)
@@ -312,17 +159,11 @@ async def proxy_with_httpx(
             return Response(
                 content=body,
                 status_code=openrouter_resp.status_code,
+                media_type="application/json",
                 headers=headers,
             )
 
-        async def stream_completion():
-            if not (api_key or is_completion):
-                try:
-                    async for chunk in openrouter_resp.aiter_bytes():
-                        yield chunk
-                finally:
-                    await openrouter_resp.aclose()
-                return
+        async def sse_stream():
             last_json = ""
             try:
                 async for line in openrouter_resp.aiter_lines():
@@ -330,26 +171,31 @@ async def proxy_with_httpx(
                         last_json = line[6:]
                     yield f"{line}\n\n".encode("utf-8")
             except Exception as err:
-                logger.error("stream_completion error: %s", err)
+                logger.error("sse_stream error: %s", err)
             finally:
                 await openrouter_resp.aclose()
             await check_httpx_err(last_json, api_key)
 
 
         return StreamingResponse(
-            stream_completion(),
+            sse_stream(),
             status_code=openrouter_resp.status_code,
+            media_type="text/event-stream",
             headers=headers,
         )
+    except httpx.HTTPStatusError as e:
+        await check_httpx_err(e.response.content, api_key)
+        logger.error("Request error: %s", str(e))
+        raise HTTPException(e.response.status_code, str(e.response.content)) from e
     except httpx.ConnectError as e:
         logger.error("Connection error to OpenRouter: %s", str(e))
         raise HTTPException(503, "Unable to connect to OpenRouter API") from e
     except httpx.TimeoutException as e:
         logger.error("Timeout connecting to OpenRouter: %s", str(e))
         raise HTTPException(504, "OpenRouter API request timed out") from e
-    except HTTPException as e:
-        logger.error("Error proxying request with httpx: %s", str(e))
-        raise e
+    except Exception as e:
+        logger.error("Internal error: %s", str(e))
+        raise HTTPException(status_code=500, detail="Internal Proxy Error") from e
 
 
 @router.get("/health")

@@ -104,31 +104,6 @@ async def is_google_error(data: str) -> bool:
     return False
 
 
-async def check_rate_limit_chat(err: APIError) -> Tuple[bool, Optional[int]]:
-    """
-    Check for rate limit error.
-
-    Args:
-        err: OpenAI APIError
-
-    Returns:
-        Tuple (has_rate_limit_error, reset_time_ms)
-    """
-    has_rate_limit_error = False
-    reset_time_ms = None
-
-    if err.code == RATE_LIMIT_ERROR_CODE:
-        has_rate_limit_error = True
-        if isinstance(err.body, dict):
-            try:
-                reset_time_ms = int(err.body["metadata"]["headers"]["X-RateLimit-Reset"])
-            except (TypeError, KeyError):
-                if await is_google_error(err.body.get("metadata", {}).get("raw", "")):
-                    has_rate_limit_error = False
-
-    return has_rate_limit_error, reset_time_ms
-
-
 async def check_rate_limit(data: str or bytes) -> Tuple[bool, Optional[int]]:
     """
     Check for rate limit error.
