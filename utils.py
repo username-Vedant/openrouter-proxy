@@ -9,7 +9,6 @@ import socket
 from typing import Optional, Tuple
 
 from fastapi import Header, HTTPException
-from openai import APIError
 
 from config import config, logger
 from constants import RATE_LIMIT_ERROR_CODE

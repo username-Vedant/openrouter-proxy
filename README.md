@@ -48,6 +48,12 @@ openrouter:
     - "sk-or-v1-your-second-api-key"
     - "sk-or-v1-your-third-api-key"
 
+  # Key selection strategy: "round-robin" (default), "first" or "random".
+  key_selection_strategy: "round-robin"
+  # List of key selection options:
+  #   "same": Always use the last used key as long as it is possible.
+  key_selection_opts: []
+
   # OpenRouter API base URL
   base_url: "https://openrouter.ai/api/v1"
 

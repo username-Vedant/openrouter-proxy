@@ -100,6 +100,19 @@ def normalize_and_validate_config(config_data: Dict[str, Any]):
             "Proxy will not work for authenticated endpoints."
         )
 
+    def_key_selection_strategy = "round-robin"
+    if (not isinstance(key_selection_strategy := openrouter_config.get("key_selection_strategy"), str) or
+            key_selection_strategy not in ["round-robin", "first", "random"]):
+        logger.warning(
+            "'openrouter.key_selection_strategy' is unknown: '%s', set '%s'",
+            str(key_selection_strategy), def_key_selection_strategy
+        )
+        openrouter_config["key_selection_strategy"] = def_key_selection_strategy
+
+    if not isinstance(openrouter_config.get("key_selection_opts"), list):
+        logger.warning("'openrouter.key_selection_opts' missing or invalid in config.yml. Using empty list.")
+        openrouter_config["key_selection_opts"] = []
+
     default_free_only = False
     if not isinstance(openrouter_config.get("free_only"), bool):
          logger.warning(

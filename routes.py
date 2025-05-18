@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse, Response
 
 from config import config, logger
 from constants import MODELS_ENDPOINTS
-from key_manager import KeyManager
+from key_manager import KeyManager, mask_key
 from utils import verify_access_key, check_rate_limit
 
 # Create router
@@ -23,6 +23,8 @@ router = APIRouter()
 key_manager = KeyManager(
     keys=config["openrouter"]["keys"],
     cooldown_seconds=config["openrouter"]["rate_limit_cooldown"],
+    strategy=config["openrouter"]["key_selection_strategy"],
+    opts=config["openrouter"]["key_selection_opts"],
 )
 
 
@@ -93,10 +95,11 @@ async def proxy_endpoint(
 
     # Log the full request URL including query parameters
     full_url = str(request.url).replace(str(request.base_url), "/")
-    logger.info("Proxying request to %s (Public: %s)", full_url, is_public)
 
     # Get API key to use
     api_key = "" if is_public else await key_manager.get_next_key()
+
+    logger.info("Proxying request to %s (Public: %s, key: %s)", full_url, is_public, mask_key(api_key))
 
     is_stream = False
     if request.method == "POST":
