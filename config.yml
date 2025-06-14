@@ -1,0 +1,7 @@
+default_model: mistralai/mistral-7b-instruct:free
+
+models:
+  mistralai/mistral-7b-instruct:free:
+    api_base: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    access_key: Smartchat-pro.1
