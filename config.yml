@@ -1,3 +1,8 @@
+openrouter:
+  base_url: https://openrouter.ai/api/v1
+  public_endpoints:
+    - /api/v1/chat/completions
+
 default_model: mistralai/mistral-7b-instruct:free
 
 models:
@@ -5,5 +10,3 @@ models:
     api_base: https://openrouter.ai/api/v1
     api_key: ${OPENROUTER_API_KEY}
     access_key: Smartchat-pro.1
-    public_endpoints:
-      - /api/v1/chat/completions
